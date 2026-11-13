@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { Icon } from "./ui/icon";
-import { AgexMark } from "./ui/brand";
+import { AgexMark, PackCube, PackLoader } from "./ui/brand";
 import AgentEditor from "./editor/agent-editor";
 import FilePreview from "./preview/file-preview";
 import BridgePanel from "./bridge-panel";
@@ -497,13 +497,21 @@ export default function Studio() {
           className="template-card"
           onClick={() => create(t.id)}
         >
-          <span className={`template-icon ${t.color}`}>
-            <Icon name={t.icon} size={23} />
+          <span className="template-card-top">
+            <span className={`template-icon ${t.color}`}>
+              <Icon name={t.icon} size={19} />
+            </span>
+            <PackCube
+              size={22}
+              hasRules={t.rules.length > 0}
+              hasSkills={t.skills.length > 0}
+              eyes={t.id !== "generic"}
+            />
           </span>
           <h3>{t.name}</h3>
           <p>{t.description}</p>
           <span className="template-link">
-            Usar template <ArrowRight size={15} />
+            Usar template <ArrowRight size={14} />
           </span>
         </button>
       ))}
@@ -527,7 +535,7 @@ export default function Studio() {
             <span className="brand-wordmark">
               ag<span className="brand-light">ex</span>
             </span>
-            <small>AGENTES .AGENTS · PONTE MCP</small>
+            <small>PACKS .AGENTS · PONTE MCP</small>
           </span>
         </button>
         <div className="workspace-label">
@@ -588,7 +596,7 @@ export default function Studio() {
           </div>
           <div className="sidebar-footer">
             <span>Feito para construir.</span>
-            <span className="version">v1.0 · MCP Bridge</span>
+            <span className="version">v1.0 · MCP</span>
           </div>
         </div>
       </aside>
@@ -685,7 +693,10 @@ export default function Studio() {
             onChange={(e) => importFile(e.target.files?.[0], true)}
           />
           {!ready ? (
-            <div className="loading">Preparando seu workspace…</div>
+            <div className="loading">
+              <PackLoader size={42} />
+              <span>Preparando seu workspace…</span>
+            </div>
           ) : (
             <>
               {view === "library" && (
@@ -717,15 +728,15 @@ export default function Studio() {
                       <h2>
                         Menos configuração.
                         <br />
-                        Mais criação.
+                        <span>Mais criação.</span>
                       </h2>
                       <p>
-                        Escolha um ponto de partida, personalize seu agente
-                        <br className="desktop-break" /> e leve os arquivos para
-                        o seu projeto. Simples assim.
+                        Escolha um ponto de partida, encaixe regras, skills e
+                        MCPs <br className="desktop-break" />e leve os arquivos
+                        prontos para o seu projeto.
                       </p>
                       <button
-                        className="button dark"
+                        className="button signal"
                         onClick={() => navigate("templates")}
                       >
                         Explorar templates <ArrowRight size={17} />
@@ -735,27 +746,25 @@ export default function Studio() {
                       <div className="orbit orbit-one" />
                       <div className="orbit orbit-two" />
                       <div className="float-chip chip-code">
-                        <Icon name="code" />
-                        Ferramentas
-                        <Check size={13} />
+                        <span className="face-dot mcp" />
+                        MCP · Ferramentas
+                        <Check size={12} />
                       </div>
                       <div className="float-chip chip-skill">
-                        <Icon name="spark" />
+                        <span className="face-dot skill" />
                         Skills
-                        <Check size={13} />
+                        <Check size={12} />
                       </div>
                       <div className="float-chip chip-rule">
-                        <Icon name="file" />
+                        <span className="face-dot rule" />
                         Regras
-                        <Check size={13} />
+                        <Check size={12} />
                       </div>
                       <div className="central-agent">
-                        <AgexMark size={48} />
+                        <PackCube size={78} seam="#0B0D1A" />
                         <span>seu-agente.md</span>
                         <small>PRONTO PARA EXPORTAR</small>
                       </div>
-                      <div className="tiny-spark spark-one">✦</div>
-                      <div className="tiny-spark spark-two">✧</div>
                     </div>
                   </section>
                   <div className="section-title">
@@ -834,7 +843,7 @@ export default function Studio() {
                     {!filtered.length ? (
                       <div className="empty-state">
                         <span>
-                          <Icon name="bot" size={28} />
+                          <PackCube variant="outline" size={32} />
                         </span>
                         <h3>
                           {agents.length
@@ -859,85 +868,149 @@ export default function Studio() {
                       </div>
                     ) : (
                       <div className="agent-grid">
-                        {filtered.map((agent) => (
-                          <article className="agent-card" key={agent.id}>
-                            <div className="agent-card-top">
-                              <span className="template-icon violet">
-                                <Icon name="bot" />
-                              </span>
-                              <div>
+                        {filtered.map((agent) => {
+                          const activeRules = agent.rules.filter(
+                            (r) => r.enabled,
+                          ).length;
+                          const activeSkills = agent.skills.filter(
+                            (s) => s.enabled,
+                          ).length;
+                          const activeMcp = agent.mcpServers.filter(
+                            (m) => m.enabled,
+                          ).length;
+                          return (
+                            <article className="agent-card" key={agent.id}>
+                              <div className="agent-card-top">
+                                <div className="agent-card-identity">
+                                  <span className="pack-avatar">
+                                    <PackCube
+                                      size={30}
+                                      hasRules={activeRules > 0}
+                                      hasSkills={activeSkills > 0}
+                                    />
+                                  </span>
+                                  <span className="agent-card-slug">
+                                    agents/{agent.slug || "agente"}.md
+                                  </span>
+                                </div>
+                                <div>
+                                  <button
+                                    className="icon-button"
+                                    aria-label={`Duplicar ${agent.name}`}
+                                    title="Duplicar"
+                                    onClick={() => duplicate(agent)}
+                                  >
+                                    <Copy size={16} />
+                                  </button>
+                                  <button
+                                    className="icon-button danger"
+                                    aria-label={`Excluir ${agent.name}`}
+                                    title="Excluir"
+                                    onClick={() => setDeleteId(agent.id)}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </div>
+                              <button
+                                className="agent-open"
+                                onClick={() => open(agent)}
+                              >
+                                <h3>{agent.name || "Agente sem nome"}</h3>
+                                <p>
+                                  {agent.description ||
+                                    "Adicione uma descrição ao seu agente."}
+                                </p>
+                              </button>
+                              <div className="pack-bar" aria-hidden="true">
+                                <span
+                                  className="pack-seg-agent"
+                                  style={{ flex: 1 }}
+                                />
+                                {activeRules > 0 && (
+                                  <span
+                                    className="pack-seg-rules"
+                                    style={{ flex: activeRules }}
+                                  />
+                                )}
+                                {activeSkills > 0 && (
+                                  <span
+                                    className="pack-seg-skills"
+                                    style={{ flex: activeSkills }}
+                                  />
+                                )}
+                                {activeMcp > 0 && (
+                                  <span
+                                    className="pack-seg-mcp"
+                                    style={{ flex: activeMcp }}
+                                  />
+                                )}
+                              </div>
+                              <div className="agent-tags">
+                                {effectiveReview(agent) ===
+                                  "pending_review" && (
+                                  <span className="review-pill pending">
+                                    Criado pela IA · Aguarda OK
+                                  </span>
+                                )}
+                                {effectiveReview(agent) === "approved" && (
+                                  <span className="review-pill approved">
+                                    Aprovado para exportar
+                                  </span>
+                                )}
+                                {effectiveReview(agent) === "stale" && (
+                                  <span className="review-pill stale">
+                                    Alterado · Reaprovar
+                                  </span>
+                                )}
+                                <span>{modelLabel(agent.model)}</span>
+                                <span className="face-tag">
+                                  <i
+                                    className="face-dot rule"
+                                    aria-hidden="true"
+                                  />
+                                  {activeRules} regras
+                                </span>
+                                <span className="face-tag">
+                                  <i
+                                    className="face-dot skill"
+                                    aria-hidden="true"
+                                  />
+                                  {activeSkills} skills
+                                </span>
+                                {activeMcp > 0 && (
+                                  <span className="face-tag">
+                                    <i
+                                      className="face-dot mcp"
+                                      aria-hidden="true"
+                                    />
+                                    {activeMcp} MCP
+                                  </span>
+                                )}
+                                {agent.tags.filter(Boolean).map((t, i) => (
+                                  <span key={i}>{t}</span>
+                                ))}
+                              </div>
+                              <div className="agent-card-bottom">
+                                <span>
+                                  Editado em{" "}
+                                  {new Intl.DateTimeFormat("pt-BR", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }).format(new Date(agent.updatedAt))}
+                                </span>
                                 <button
-                                  className="icon-button"
-                                  aria-label={`Duplicar ${agent.name}`}
-                                  title="Duplicar"
-                                  onClick={() => duplicate(agent)}
+                                  onClick={() => open(agent)}
+                                  aria-label={`Editar ${agent.name}`}
                                 >
-                                  <Copy size={16} />
-                                </button>
-                                <button
-                                  className="icon-button danger"
-                                  aria-label={`Excluir ${agent.name}`}
-                                  title="Excluir"
-                                  onClick={() => setDeleteId(agent.id)}
-                                >
-                                  <Trash2 size={16} />
+                                  <ArrowRight size={17} />
                                 </button>
                               </div>
-                            </div>
-                            <button
-                              className="agent-open"
-                              onClick={() => open(agent)}
-                            >
-                              <h3>{agent.name || "Agente sem nome"}</h3>
-                              <p>
-                                {agent.description ||
-                                  "Adicione uma descrição ao seu agente."}
-                              </p>
-                            </button>
-                            <div className="agent-tags">
-                              {effectiveReview(agent) === "pending_review" && (
-                                <span className="review-pill pending">
-                                  Criado pela IA · Aguarda OK
-                                </span>
-                              )}
-                              {effectiveReview(agent) === "approved" && (
-                                <span className="review-pill approved">
-                                  Aprovado para exportar
-                                </span>
-                              )}
-                              {effectiveReview(agent) === "stale" && (
-                                <span className="review-pill stale">
-                                  Alterado · Reaprovar
-                                </span>
-                              )}
-                              <span>{modelLabel(agent.model)}</span>
-                              <span>
-                                {agent.skills.filter((s) => s.enabled).length}{" "}
-                                skills
-                              </span>
-                              {agent.tags.filter(Boolean).map((t, i) => (
-                                <span key={i}>{t}</span>
-                              ))}
-                            </div>
-                            <div className="agent-card-bottom">
-                              <span>
-                                Editado em{" "}
-                                {new Intl.DateTimeFormat("pt-BR", {
-                                  day: "2-digit",
-                                  month: "short",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                }).format(new Date(agent.updatedAt))}
-                              </span>
-                              <button
-                                onClick={() => open(agent)}
-                                aria-label={`Editar ${agent.name}`}
-                              >
-                                <ArrowRight size={17} />
-                              </button>
-                            </div>
-                          </article>
-                        ))}
+                            </article>
+                          );
+                        })}
                       </div>
                     )}
                     <button
@@ -973,7 +1046,7 @@ export default function Studio() {
                   </div>
                   {templates}
                   <div className="blank-template">
-                    <Icon name="spark" size={30} />
+                    <PackCube variant="outline" size={34} />
                     <div>
                       <h3>Uma ideia diferente?</h3>
                       <p>
@@ -1092,7 +1165,7 @@ export default function Studio() {
                         <div className="review-buttons">
                           <button
                             type="button"
-                            className="button primary"
+                            className={`button ${effectiveReview(a) === "approved" ? "secondary" : "signal"}`}
                             disabled={
                               bridgeBusy ||
                               !bridgeConnected ||
@@ -1110,7 +1183,7 @@ export default function Studio() {
                           {effectiveReview(a) === "approved" && (
                             <button
                               type="button"
-                              className="button secondary"
+                              className="button signal"
                               disabled={
                                 bridgeBusy ||
                                 !bridgeConnected ||
@@ -1192,12 +1265,15 @@ export default function Studio() {
                       Criar agente <Plus size={17} />
                     </button>
                   </div>
-                  <h2 className="catalog-title">Regras de comportamento</h2>
+                  <h2 className="catalog-title">
+                    <span className="face-dot rule" aria-hidden="true" />
+                    Regras de comportamento
+                  </h2>
                   <div className="catalog-grid">
                     {RULES.map((r) => (
                       <details className="catalog-card" key={r.id}>
                         <summary>
-                          <Icon name="file" />
+                          <span className="face-dot rule" aria-hidden="true" />
                           <h3>{r.name}</h3>
                           <ChevronRight size={16} />
                         </summary>
@@ -1206,12 +1282,15 @@ export default function Studio() {
                       </details>
                     ))}
                   </div>
-                  <h2 className="catalog-title">Skills e procedimentos</h2>
+                  <h2 className="catalog-title">
+                    <span className="face-dot skill" aria-hidden="true" />
+                    Skills e procedimentos
+                  </h2>
                   <div className="catalog-grid">
                     {SKILLS.map((s) => (
                       <details className="catalog-card" key={s.id}>
                         <summary>
-                          <Icon name="spark" />
+                          <span className="face-dot skill" aria-hidden="true" />
                           <h3>{s.name}</h3>
                           <ChevronRight size={16} />
                         </summary>
@@ -1237,29 +1316,39 @@ export default function Studio() {
                     {[
                       {
                         icon: "bot",
+                        face: "agent",
                         title: "Agentes",
                         text: "Definem a identidade, o objetivo e as ferramentas de um especialista. Podem atuar como principal ou receber tarefas como subagentes.",
                       },
                       {
                         icon: "file",
+                        face: "rule",
                         title: "Regras",
                         text: "Orientações de comportamento do workspace. Podem estar sempre ativas, ser escolhidas pelo modelo, ativadas por arquivos ou mencionadas manualmente.",
                       },
                       {
                         icon: "spark",
+                        face: "skill",
                         title: "Skills",
                         text: "Procedimentos reutilizáveis. Cada skill tem uma descrição que indica quando utilizá-la e instruções que explicam o passo a passo.",
                       },
                       {
                         icon: "plug",
+                        face: "mcp",
                         title: "MCPs",
                         text: "Conectam ferramentas e dados externos (banco, APIs, documentação) em qualquer linguagem via .agents/mcp_config.json. Para conectar o próprio Agex ao Antigravity, use a Ponte local.",
                       },
                     ].map((x) => (
                       <article className="help-card" key={x.title}>
-                        <span className="template-icon violet">
-                          <Icon name={x.icon} />
-                        </span>
+                        <div className="help-card-top">
+                          <span className="template-icon violet">
+                            <Icon name={x.icon} size={19} />
+                          </span>
+                          <span
+                            className={`face-dot ${x.face}`}
+                            aria-hidden="true"
+                          />
+                        </div>
                         <h2>{x.title}</h2>
                         <p>{x.text}</p>
                       </article>
@@ -1354,13 +1443,14 @@ export default function Studio() {
       </div>
       {toast && (
         <div className="toast" role="status">
+          <span className="status-dot" aria-hidden="true" />
           <span>{toast}</span>
           <button
             className="icon-button"
             aria-label="Fechar aviso"
             onClick={() => setToast("")}
           >
-            <X size={17} />
+            <X size={16} />
           </button>
         </div>
       )}

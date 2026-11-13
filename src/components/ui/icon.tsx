@@ -33,13 +33,22 @@ export const icons: Record<string, LucideIcon> = {
 };
 export function Icon({
   name,
-  size = 20,
+  size = 19,
+  strokeWidth = 1.55,
   ...props
 }: {
   name: string;
   size?: number;
+  strokeWidth?: number;
   className?: string;
 }) {
   const Component = icons[name] ?? Bot;
-  return <Component size={size} aria-hidden="true" {...props} />;
+  return (
+    <Component
+      size={size}
+      strokeWidth={strokeWidth}
+      aria-hidden="true"
+      {...props}
+    />
+  );
 }

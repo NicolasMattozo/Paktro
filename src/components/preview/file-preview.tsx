@@ -125,7 +125,7 @@ export default function FilePreview({
                     onClick={() => setPath(f.path)}
                     aria-pressed={file?.path === f.path}
                   >
-                    <FileCode2 size={15} />
+                    <span className={`face-dot ${f.kind}`} aria-hidden="true" />
                     <span>{f.path}</span>
                   </button>
                 ))}
@@ -198,7 +198,7 @@ export default function FilePreview({
           </p>
         ))}
         <button
-          className="button primary export-button"
+          className="button signal export-button"
           disabled={errors.length > 0}
           onClick={onZip}
         >

@@ -330,7 +330,10 @@ export default function AgentEditor({
               </div>
             </div>
             <div className="subheading">
-              <h3>Regras de comportamento</h3>
+              <h3>
+                <span className="face-dot rule" aria-hidden="true" />
+                Regras de comportamento
+              </h3>
               <button
                 className="text-button"
                 disabled={a.rules.length >= 30}
@@ -378,7 +381,7 @@ export default function AgentEditor({
               >
                 <summary>
                   <span>
-                    <Icon name="file" size={17} />
+                    <span className="face-dot rule" aria-hidden="true" />
                     {r.name || r.id}
                   </span>
                   <span className="mini-badge">
@@ -471,7 +474,10 @@ export default function AgentEditor({
               </details>
             ))}
             <div className="subheading skill-heading">
-              <h3>Skills</h3>
+              <h3>
+                <span className="face-dot skill" aria-hidden="true" />
+                Skills
+              </h3>
               <button
                 className="text-button"
                 disabled={a.skills.length >= 30}
@@ -517,7 +523,7 @@ export default function AgentEditor({
               >
                 <summary>
                   <span>
-                    <Icon name="spark" size={17} />
+                    <span className="face-dot skill" aria-hidden="true" />
                     {s.name || s.id}
                   </span>
                   <span className="mini-badge">
@@ -607,7 +613,10 @@ export default function AgentEditor({
             {a.mcpServers.map((m, index) => (
               <div className="item-editor item-body" key={index}>
                 <div className="item-actions">
-                  <strong>{m.id || "novo-servidor"}</strong>
+                  <strong className="mcp-server-title">
+                    <span className="face-dot mcp" aria-hidden="true" />
+                    {m.id || "novo-servidor"}
+                  </strong>
                   <label className="toggle-label">
                     <input
                       type="checkbox"
