@@ -24,11 +24,11 @@ npm start
 
 - Biblioteca local de conjuntos (cada conjunto contém um agente, regras, skills e MCPs), com criação, renomeação pelo editor, duplicação, exclusão confirmada, busca, ordenação, etiquetas e comparação de conteúdo.
 - Cinco templates universais (agnósticos de linguagem): revisor de código, frontend, segurança, testes e genérico.
-- Editor em quatro etapas com identidade, especialidade, objetivo, modelo (`Herdar`, **Gemini 4 Hydrogen** nos níveis `low`, `medium`, `high` e `xhigh`/Extra, **Gemini 4 Argon** nos níveis `low`, `medium` e `high`, `Flash` e `Pro`), papéis, ferramentas e política de comandos.
+- Editor em quatro etapas com identidade, especialidade, objetivo, modelo (`Herdar`, **Gemini 4 Hydrogen** nos níveis `low`, `medium`, `high` e `xhigh`/Extra, **Gemini 4 Argon**, **Gemini 3.8 Flash**, **Claude Opus 5.5** e **Claude Sonnet 5.5** nos níveis `low`, `medium` e `high`, **Orchestrator (Argon)**, `Flash` e `Pro`), papéis, ferramentas e política de comandos.
 - Galerias e edição visual de regras e skills universais para qualquer linguagem/stack, incluindo ativação, desativação, remoção e criação de procedimentos próprios.
 - Regras com os quatro modos de ativação, incluindo padrões glob.
 - Configuração visual de servidores MCP `stdio` (em qualquer linguagem: Python, Node, Go, Rust, Docker etc.) e `Streamable HTTP`, sem executar servidores ou solicitar credenciais no editor, com guia passo a passo de conexão.
-- Prévia imediata de árvore e código, destaque simples de sintaxe, cópia, arquivo individual e ZIP com guia `AGEX-SETUP.md` (quando Hydrogen ou Argon é selecionado) e backup JSON separado (`agex.json`).
+- Prévia imediata de árvore e código, destaque simples de sintaxe, cópia, arquivo individual e ZIP com guia `AGEX-SETUP.md` (quando um modelo específico de sessão é selecionado) e backup JSON separado (`agex.json`).
 - Persistência automática em `localStorage` (`agex:library:v1`, com leitura retrocompatível de `agent-studio:library:v1`), tratamento de indisponibilidade/cota/corrupção e detecção de alterações em outra aba.
 - Backup JSON versionado; importação preserva agentes existentes e atribui novos IDs para evitar sobrescritas.
 - Importação de agentes Markdown e ZIP Antigravity, reconstruindo os campos suportados e suas dependências.
@@ -48,11 +48,11 @@ Mapeamento versionado em `src/generators/antigravity/index.ts`: **antigravity-20
   rules/<regra>.md
   skills/<skill>/SKILL.md
   mcp_config.json              # apenas com integrações habilitadas
-AGEX-SETUP.md                  # gerado quando Hydrogen ou Argon é selecionado
+AGEX-SETUP.md                  # gerado quando um modelo de sessão é selecionado
 agex.json                      # backup do editor, não configuração Antigravity
 ```
 
-Os metadados dos agentes são serializados com `yaml`; nomes e referências internos do Agex não vazam para propriedades inventadas. Como o frontmatter documentado de agentes customizados aceita apenas `inherit`, `flash` ou `pro`, a seleção de **Gemini 4 Hydrogen** (`gemini-4-hydrogen-low`, `medium`, `high`, `xhigh`) ou **Gemini 4 Argon** (`gemini-4-argon-low`, `medium`, `high`) exporta `model: inherit` no `.md` e inclui `AGEX-SETUP.md` com os passos para ativar o modelo exato no seletor do App/IDE e via CLI (`agy models`, `agy --agent <slug> --model <id>`). As referências de skills seguem `skills/<identificador>`, conforme o exemplo oficial. MCPs são definidos no arquivo de workspace; o corpo do agente explica a referência. A aplicação deliberadamente não adivinha a estrutura de MCPs inline do frontmatter.
+Os metadados dos agentes são serializados com `yaml`; nomes e referências internos do Agex não vazam para propriedades inventadas. Como o frontmatter documentado de agentes customizados aceita apenas `inherit`, `flash` ou `pro`, a seleção de modelos concretos de sessão — **Gemini 4 Hydrogen** (`low`, `medium`, `high`, `xhigh`), **Gemini 4 Argon** (`low`, `medium`, `high`), **Gemini 3.8 Flash** (`low`, `medium`, `high`), **Orchestrator (Argon)** (`gemini-pro-orchestrator-g1-pro`), **Claude Opus 5.5** (`low`, `medium`, `high`) ou **Claude Sonnet 5.5** (`low`, `medium`, `high`) — exporta `model: inherit` no `.md` e inclui `AGEX-SETUP.md` com os passos para ativar o modelo exato no seletor do App/IDE e via CLI (`agy models`, `agy --agent <slug> --model <id>`). As referências de skills seguem `skills/<identificador>`, conforme o exemplo oficial. MCPs são definidos no arquivo de workspace; o corpo do agente explica a referência. A aplicação deliberadamente não adivinha a estrutura de MCPs inline do frontmatter.
 
 O catálogo inclui 21 ferramentas confirmadas: as 20 ferramentas padrão da documentação de hooks e `call_mcp_tool`, da documentação MCP. O seletor oferece busca e seis categorias. Os nomes e fontes ficam centralizados em `src/templates/tools.ts`. A lista documentada não garante que todas estejam disponíveis em qualquer sessão; ferramentas adicionais de navegador e MCP dependem do ambiente. A documentação de plugins informa que `send_message` pode permanecer incluída pela plataforma mesmo fora da allowlist. Agentes customizados são destinados ao **App e CLI**; os recursos do IDE e as permissões de cada sessão podem variar. Regras manuais dependem de menções no App, indisponíveis no CLI. Regras comportamentais não são controles de acesso.
 
@@ -125,7 +125,7 @@ Ferramentas disponíveis:
 
 | Ferramenta               | Entrada                    | Resultado                                                                      |
 | ------------------------ | -------------------------- | ------------------------------------------------------------------------------ |
-| `get_studio_catalog`     | nenhum parâmetro           | Templates, modelos (Hydrogen/Argon), ferramentas válidas, regras e skills      |
+| `get_studio_catalog`     | nenhum parâmetro           | Templates, modelos de sessão (Gemini, Orchestrator, Claude), ferramentas, regras e skills |
 | `list_packs`             | nenhum parâmetro           | IDs, nomes, slugs, modelos e status (`pending_review`, `approved`, `stale`)    |
 | `get_pack`               | `id` UUID                  | Configuração, status de aprovação e arquivos gerados                           |
 | `validate_pack`          | `id` UUID                  | Validade, status de aprovação, erros e avisos                                  |

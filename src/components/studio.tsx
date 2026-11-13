@@ -1359,8 +1359,9 @@ export default function Studio() {
                     <ol>
                       <li>Escolha um template e personalize a identidade.</li>
                       <li>
-                        Selecione modelo (Herdar, Gemini 4 Hydrogen, Gemini 4
-                        Argon, Flash ou Pro), ferramentas, regras, skills e
+                        Selecione modelo (Herdar, Gemini 4 Hydrogen/Argon,
+                        Gemini 3.8 Flash, Orchestrator Argon, Claude Opus/Sonnet
+                        5.5, Flash ou Pro), ferramentas, regras, skills e
                         integrações MCP.
                       </li>
                       <li>Confira o conteúdo de cada arquivo na prévia.</li>
@@ -1372,8 +1373,8 @@ export default function Studio() {
                       <li>
                         Abra o projeto no Antigravity, confira os agentes e
                         recarregue os servidores MCP (<code>/mcp</code> ou
-                        Configurações). Se escolheu Hydrogen ou Argon, siga{" "}
-                        <code>AGEX-SETUP.md</code> na sessão.
+                        Configurações). Se escolheu um modelo específico de
+                        sessão, siga <code>AGEX-SETUP.md</code> na sessão.
                       </li>
                     </ol>
                     <h3>Universal para qualquer linguagem</h3>

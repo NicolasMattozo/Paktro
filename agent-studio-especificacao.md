@@ -45,7 +45,7 @@ O editor deve permitir selecionar um template (por exemplo, Revisor de Código, 
 | Grupo | Opções do editor | Saída esperada |
 |---|---|---|
 | Identidade | Nome, descrição, especialidade e objetivo | `name`, `description` e instruções do agente |
-| Execução | Herdar, Gemini 4 Hydrogen (`Low` a `Extra`/`xhigh`), Gemini 4 Argon (`Low` a `High`), Flash ou Pro | `model: inherit`, `flash` ou `pro` no YAML do agente; quando Hydrogen ou Argon é escolhido, gera `AGEX-SETUP.md` com instruções de sessão (App/IDE e `agy --model`) |
+| Execução | Herdar, Gemini 4 Hydrogen (`Low` a `Extra`/`xhigh`), Gemini 4 Argon, Gemini 3.8 Flash, Claude Opus 5.5, Claude Sonnet 5.5 (`Low` a `High`), Orchestrator (Argon), Flash ou Pro | `model: inherit`, `flash` ou `pro` no YAML do agente; quando um modelo de sessão é escolhido, gera `AGEX-SETUP.md` com instruções de sessão (App/IDE e `agy --model`) |
 | Papel | Permitir agente principal e/ou subagente | `mainAgent`, `subagent` |
 | Ferramentas | Seleção entre nomes de ferramentas válidos e documentados | `tools` |
 | Comandos | Política de execução selecionada | `commandExecutionPolicy` |
@@ -116,12 +116,12 @@ A versão inicial deve gerar os seguintes caminhos de **workspace**, conforme ap
 │   └── review-checklist/
 │       └── SKILL.md
 └── mcp_config.json         # somente quando houver MCP configurado
-AGEX-SETUP.md               # gerado quando um modelo específico de sessão (Hydrogen/Argon) é escolhido
+AGEX-SETUP.md               # gerado quando um modelo específico de sessão é escolhido
 ```
 
 Para agentes customizados, o Antigravity usa Markdown com frontmatter YAML. Campos documentados incluem `name`, `description`, `tools`, `mainAgent`, `subagent`, `model` (`inherit`, `flash` ou `pro`), `commandExecutionPolicy`, `mcpServers` e `skills`.
 
-Modelos concretos de sessão documentados no Antigravity — como **Gemini 4 Hydrogen** (`gemini-4-hydrogen-low`, `medium`, `high`, `xhigh` / *Extra* no App) e **Gemini 4 Argon** (`gemini-4-argon-low`, `medium`, `high`) — são escolhidos na sessão do App/IDE ou via CLI (`agy models`, `agy --agent <slug> --model <id>`). Por isso, quando selecionados na etapa **Identidade**, o frontmatter exporta `model: inherit` e o pacote inclui `AGEX-SETUP.md` com os passos exatos de ativação.
+Modelos concretos de sessão documentados no Antigravity — como **Gemini 4 Hydrogen** (`gemini-4-hydrogen-low`, `medium`, `high`, `xhigh` / *Extra* no App), **Gemini 4 Argon** (`low`, `medium`, `high`), **Gemini 3.8 Flash** (`low`, `medium`, `high`), **Orchestrator (Argon)** (`gemini-pro-orchestrator-g1-pro`), **Claude Opus 5.5** (`low`, `medium`, `high`) e **Claude Sonnet 5.5** (`low`, `medium`, `high`) — são escolhidos na sessão do App/IDE ou via CLI (`agy models`, `agy --agent <slug> --model <id>`). Por isso, quando selecionados na etapa **Identidade**, o frontmatter exporta `model: inherit` e o pacote inclui `AGEX-SETUP.md` com os passos exatos de ativação.
 
 As regras em `.agents/rules/*.md` precisam de frontmatter YAML com `trigger` válido (`always_on`, `model_decision`, `glob`, `manual`). Já os arquivos `AGENTS.md` e `GEMINI.md`, que também são suportados, não usam esse frontmatter. Skills usam uma pasta contendo `SKILL.md`, com metadados como `name` e `description`.
 

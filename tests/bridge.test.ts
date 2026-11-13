@@ -96,6 +96,10 @@ describe("ponte local", () => {
         (catalogRes.content as { text: string }[])[0].text,
       );
       expect(catalog.validModelIds).toContain("gemini-4-hydrogen-xhigh");
+      expect(catalog.validModelIds).toContain("claude-opus-5-5-high");
+      expect(catalog.validModelIds).toContain("claude-sonnet-5-5-medium");
+      expect(catalog.validModelIds).toContain("gemini-3.8-flash-high");
+      expect(catalog.validModelIds).toContain("gemini-pro-orchestrator-g1-pro");
       expect(catalog.toolNotes).toContain("call_mcp_tool");
       const list = await client.callTool({ name: "list_packs", arguments: {} });
       expect(

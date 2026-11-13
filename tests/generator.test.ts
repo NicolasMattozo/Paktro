@@ -225,12 +225,17 @@ describe("catálogo ampliado de ferramentas", () => {
   });
 });
 
-describe("modelos Hydrogen e Argon, universalidade e ponte", () => {
-  it("exporta inherit no YAML e gera AGEX-SETUP.md para Hydrogen e Argon", async () => {
+describe("modelos de sessão (Gemini, Orchestrator e Claude), universalidade e ponte", () => {
+  it("exporta inherit no YAML e gera AGEX-SETUP.md para modelos de sessão (sem GPT)", async () => {
     const { MODEL_IDS, isSessionModel, modelLabel, sessionCommand } =
       await import("../src/templates/models");
     expect(MODEL_IDS).toContain("gemini-4-hydrogen-xhigh");
     expect(MODEL_IDS).toContain("gemini-4-argon-high");
+    expect(MODEL_IDS).toContain("gemini-3.8-flash-high");
+    expect(MODEL_IDS).toContain("gemini-pro-orchestrator-g1-pro");
+    expect(MODEL_IDS).toContain("claude-opus-5-5-high");
+    expect(MODEL_IDS).toContain("claude-sonnet-5-5-medium");
+    expect(MODEL_IDS.some((id) => id.includes("gpt"))).toBe(false);
 
     for (const model of [
       "gemini-4-hydrogen-low",
@@ -240,6 +245,16 @@ describe("modelos Hydrogen e Argon, universalidade e ponte", () => {
       "gemini-4-argon-low",
       "gemini-4-argon-medium",
       "gemini-4-argon-high",
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-high",
+      "gemini-pro-orchestrator-g1-pro",
+      "claude-opus-5-5-low",
+      "claude-opus-5-5-medium",
+      "claude-opus-5-5-high",
+      "claude-sonnet-5-5-low",
+      "claude-sonnet-5-5-medium",
+      "claude-sonnet-5-5-high",
     ] as const) {
       expect(isSessionModel(model)).toBe(true);
       const a = createAgent("generic");

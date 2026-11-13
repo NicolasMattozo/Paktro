@@ -26,7 +26,7 @@ test("criar, editar, prévia, exportar, recarregar e importar backup", async ({
     .getByRole("button", { name: /Revisor de código.*Usar template/ })
     .click();
   await page.getByLabel(/^Nome do agente/).fill("Revisor do projeto");
-  await page.getByRole("button", { name: "Flash", exact: false }).click();
+  await page.getByRole("button", { name: /^Flash\b/, exact: false }).click();
   await page
     .getByLabel("Descrição")
     .fill("Revisa as mudanças do projeto com cuidado.");
@@ -291,6 +291,7 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.goto("/");
   await page.getByRole("button", { name: "Criar agente", exact: true }).click();
+  await page.getByText("Preferência de sessão (opcional)").click();
   await page
     .getByRole("button", { name: /Gemini 4 Hydrogen/, exact: false })
     .click();
@@ -320,6 +321,47 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
   await expect(
     page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
   ).toContainText("agy --agent my-agent --model gemini-4-argon-high");
+
+  await page
+    .getByRole("button", { name: /Gemini 3\.8 Flash/, exact: false })
+    .click();
+  await page
+    .getByLabel("Nível de raciocínio")
+    .selectOption("gemini-3.8-flash-low");
+  await expect(
+    page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
+  ).toContainText("agy --agent my-agent --model gemini-3.8-flash-low");
+
+  await page
+    .getByRole("button", { name: /Orchestrator \(Argon\)/, exact: false })
+    .click();
+  await expect(page.getByLabel("Nível de raciocínio")).toHaveCount(0);
+  await expect(
+    page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
+  ).toContainText("agy --agent my-agent --model gemini-pro-orchestrator-g1-pro");
+
+  await page
+    .getByRole("button", { name: /Claude Opus 5\.5/, exact: false })
+    .click();
+  await page
+    .getByLabel("Nível de raciocínio")
+    .selectOption("claude-opus-5-5-medium");
+  await expect(
+    page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
+  ).toContainText("agy --agent my-agent --model claude-opus-5-5-medium");
+
+  await page
+    .getByRole("button", { name: /Claude Sonnet 5\.5/, exact: false })
+    .click();
+  await page
+    .getByLabel("Nível de raciocínio")
+    .selectOption("claude-sonnet-5-5-high");
+  await expect(
+    page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
+  ).toContainText("agy --agent my-agent --model claude-sonnet-5-5-high");
+  await expect(
+    page.getByRole("button", { name: /GPT/i, exact: false }),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "4 Integrações" }).click();
   const integrationsA11y = await new AxeBuilder({ page })

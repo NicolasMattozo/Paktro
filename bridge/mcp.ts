@@ -174,7 +174,7 @@ export function createMcpServer(file: string) {
     "get_studio_catalog",
     {
       description:
-        "Lista templates, modelos Gemini 4 Hydrogen/Argon, ferramentas válidas, regras universais e skills disponíveis no Agex antes de chamar create_agent ou update_agent.",
+        "Lista templates, modelos de sessão (Gemini 4 Hydrogen/Argon, Gemini 3.8 Flash, Orchestrator Argon, Claude Opus/Sonnet 5.5), ferramentas válidas, regras universais e skills disponíveis no Agex antes de chamar create_agent ou update_agent.",
       annotations: readOnly,
     },
     async () =>
