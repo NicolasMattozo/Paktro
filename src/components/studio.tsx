@@ -1006,10 +1006,20 @@ export default function Studio() {
                         Regras
                         <Check size={12} />
                       </div>
-                      <div className="central-agent">
-                        <PackCube size={78} seam="#0B0D1A" />
-                        <span>seu-pacote/</span>
-                        <small>ANTIGRAVITY · CLAUDE · CODEX · CHATGPT</small>
+                      <div className="hero-cube-stage">
+                        <picture>
+                          <source
+                            media="(prefers-reduced-motion: reduce)"
+                            srcSet="/hero-cube-still.png"
+                          />
+                          <img
+                            src="/hero-cube.webp"
+                            alt=""
+                            width={158}
+                            height={190}
+                            decoding="async"
+                          />
+                        </picture>
                       </div>
                     </div>
                   </section>

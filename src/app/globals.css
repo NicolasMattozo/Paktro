@@ -754,8 +754,8 @@ main {
 
 .agent-illustration {
   position: relative;
-  width: 360px;
-  height: 204px;
+  width: 390px;
+  height: 218px;
   flex-shrink: 0;
   z-index: 1;
 }
@@ -767,45 +767,35 @@ main {
 }
 
 .orbit-one {
-  inset: 8px 34px;
+  inset: 10px 30px;
 }
 
 .orbit-two {
-  inset: 28px 66px;
+  inset: 30px 66px;
   border-color: rgba(91, 91, 240, 0.35);
 }
 
-.central-agent {
+.hero-cube-stage {
   position: absolute;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
-  width: 164px;
-  padding: 16px 14px 14px;
-  border-radius: var(--r-xl);
-  background: rgba(18, 21, 42, 0.92);
-  border: 1px solid var(--shell-line-strong);
+  transform: translate(-50%, -52%);
+  background: transparent;
+  border: none;
+  padding: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  pointer-events: none;
+  z-index: 2;
 }
 
-.central-agent > span {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--white);
-  white-space: nowrap;
-}
-
-.central-agent > small {
-  font-family: var(--font-mono);
-  font-size: 8.5px;
-  letter-spacing: 0.08em;
-  color: var(--signal);
-  white-space: nowrap;
+.hero-cube-stage picture,
+.hero-cube-stage img {
+  display: block;
+  width: 158px;
+  height: 190px;
+  object-fit: contain;
 }
 
 .float-chip {

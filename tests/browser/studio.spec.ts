@@ -565,3 +565,160 @@ test("fluxo completo via ponte MCP ao vivo: IA cria agente, usuário dá OK e ex
     "/tmp/projeto-go",
   );
 });
+
+test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e exportação ZIP", async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  const { default: AxeBuilder } = await import("@axe-core/playwright");
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const external: string[] = [];
+  page.on("request", (r) => {
+    if (
+      !r.url().startsWith(baseURL ?? "http://127.0.0.1:3100") &&
+      !r.url().startsWith("blob:")
+    ) {
+      external.push(r.url());
+    }
+  });
+
+  const showPreview = async () => {
+    const tab = page.getByRole("button", { name: /^Prévia/ });
+    if (await tab.isVisible()) await tab.click();
+  };
+  const showEditor = async () => {
+    const tab = page.getByRole("button", { name: /^Editor/ });
+    if (await tab.isVisible()) await tab.click();
+  };
+
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: /Menos configuração/ }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("button", { name: /Revisor de código.*Usar template/ })
+    .click();
+
+  // 1. Switch to Claude Code
+  await page.getByRole("button", { name: /Claude Code/ }).click();
+  await expect(page.getByRole("status")).toContainText(
+    /Conversão Antigravity → Claude Code/,
+  );
+  await page.getByRole("button", { name: /Opus/ }).click();
+  await page.getByLabel(/Nível de esforço/).selectOption("high");
+
+  // Add HTTP MCP server
+  await page.getByRole("button", { name: /4\s*Integrações/ }).click();
+  await page.getByRole("button", { name: /Adicionar servidor MCP/ }).click();
+  await page.getByLabel("Identificador do servidor").fill("github-remote");
+  await page.getByLabel("Transporte").selectOption("http");
+  await page
+    .getByLabel("URL do servidor")
+    .fill("https://mcp.example.com/github");
+
+  const ccOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  );
+  expect(ccOverflow).toBe(true);
+  const ccA11y = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(ccA11y.violations).toEqual([]);
+
+  await showPreview();
+  await expect(page.getByText("Estrutura validada • Claude Code")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: ".claude/agents/code-reviewer.md" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: ".mcp.json" }).click();
+  await expect(page.getByLabel("Conteúdo do arquivo")).toContainText(
+    '"type": "http"',
+  );
+
+  await page.screenshot({
+    path: testInfo.outputPath("claude-code-editor.png"),
+    fullPage: true,
+  });
+
+  const [ccDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: /Exportar ZIP/ }).click(),
+  ]);
+  const ccZip = await JSZip.loadAsync(
+    await readFile((await ccDownload.path())!),
+  );
+  expect(Object.keys(ccZip.files)).toContain(".claude/agents/code-reviewer.md");
+  expect(Object.keys(ccZip.files)).toContain(".mcp.json");
+  expect(Object.keys(ccZip.files)).toContain("agex.json");
+
+  // 2. Switch to OpenAI Codex
+  await showEditor();
+  await page.getByRole("button", { name: /1\s*Identidade/ }).click();
+  await page.getByRole("button", { name: /Codex em projeto/ }).click();
+  await expect(page.getByRole("status")).toContainText(/Conversão.*Codex/);
+  await page.getByRole("button", { name: /gpt-5\.4-mini/i }).click();
+  await page.getByLabel(/Esforço de raciocínio/).selectOption("high");
+
+  const cxA11y = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(cxA11y.violations).toEqual([]);
+  const cxOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  );
+  expect(cxOverflow).toBe(true);
+
+  await showPreview();
+  await expect(page.getByText("Estrutura validada • OpenAI Codex")).toBeVisible();
+  await expect(page.getByRole("button", { name: "AGENTS.md" })).toBeVisible();
+  await page
+    .getByRole("button", { name: ".codex/agents/code-reviewer.toml" })
+    .click();
+  await expect(page.getByLabel("Conteúdo do arquivo")).toContainText(
+    'model = "gpt-5.4-mini"',
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("codex-editor.png"),
+    fullPage: true,
+  });
+
+  // 3. Switch to ChatGPT Plugin + stdio warning check
+  await showEditor();
+  await page.getByRole("button", { name: /1\s*Identidade/ }).click();
+  await page
+    .getByRole("button", { name: /Skill \/ plugin para ChatGPT/ })
+    .click();
+  await expect(page.getByRole("status")).toContainText(/ChatGPT/);
+  await expect(
+    page.getByText(/não fixam modelo de IDE no/i),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: /4\s*Integrações/ }).click();
+  await page.getByLabel("Transporte").selectOption("stdio");
+  await page.getByLabel("Comando").fill("npx");
+
+  const gpOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  );
+  expect(gpOverflow).toBe(true);
+  const gpA11y = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(gpA11y.violations).toEqual([]);
+
+  await showPreview();
+  await expect(page.getByText(/stdio/i).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "plugin.json" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "skills/code-reviewer/SKILL.md" }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("chatgpt-plugin-editor.png"),
+    fullPage: true,
+  });
+
+  expect(errors).toEqual([]);
+  expect(external).toEqual([]);
+});
