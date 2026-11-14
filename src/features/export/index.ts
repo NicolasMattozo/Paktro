@@ -1,19 +1,26 @@
 import JSZip from "jszip";
-import { generateFiles } from "../../generators/antigravity";
+import { ensureAgentPackV2 } from "../../platforms/common/convert";
+import { generatePackFiles } from "../../platforms/registry";
 import { serializeBackup } from "../../storage/local";
-import type { AgentConfig } from "../../types";
-export async function createZip(config: AgentConfig): Promise<Blob> {
+import type { AgentConfig, AgentPackV2 } from "../../types";
+
+export async function createZip(
+  config: AgentPackV2 | AgentConfig,
+): Promise<Blob> {
+  const pack = ensureAgentPackV2(config);
   const zip = new JSZip();
-  for (const f of generateFiles(config))
+  for (const f of generatePackFiles(pack)) {
     zip.file(f.path, f.content, {
       date: new Date("2000-01-01T00:00:00Z"),
       createFolders: false,
     });
-  zip.file("agex.json", serializeBackup([config]), {
+  }
+  zip.file("agex.json", serializeBackup([pack]), {
     date: new Date("2000-01-01T00:00:00Z"),
   });
   return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
 }
+
 export function download(
   content: string | Blob,
   name: string,

@@ -21,6 +21,7 @@ import {
 } from "../bridge/store";
 import { createBridgeHttp } from "../bridge/http";
 import { createAgent } from "../src/templates/catalog";
+import { migrateV1ToV2 } from "../src/platforms/common/convert";
 const dirs: string[] = [];
 async function temp() {
   const dir = await mkdtemp(join(tmpdir(), "agent-studio-test-"));
@@ -37,7 +38,7 @@ describe("ponte local", () => {
     expect(await readStore(file)).toEqual({ agents: [], revision: "empty" });
     const a = createAgent();
     await writeStore(file, [a]);
-    expect((await readStore(file)).agents).toEqual([a]);
+    expect((await readStore(file)).agents).toEqual([migrateV1ToV2(a)]);
     expect((await readStore(file)).revision).toMatch(/^[a-f0-9]{64}$/);
   });
   it("compara mudanças e preserva conjuntos não enviados", () => {
@@ -45,7 +46,7 @@ describe("ponte local", () => {
       b = createAgent();
     const updated = { ...a, name: "Atualizado" };
     const merged = planMerge([a, b], [updated]);
-    expect(merged.agents).toEqual([updated, b]);
+    expect(merged.agents).toEqual([migrateV1ToV2(updated), migrateV1ToV2(b)]);
     expect(merged.changed).toEqual(["Atualizado"]);
     expect(merged.added).toEqual([]);
   });
@@ -208,7 +209,7 @@ describe("ponte local", () => {
         (await request("/sync", { backup, expectedRevision: plan.revision }))
           .status,
       ).toBe(200);
-      expect((await readStore(file)).agents).toEqual([a]);
+      expect((await readStore(file)).agents).toEqual([migrateV1ToV2(a)]);
       expect(
         (await request("/sync", { backup, expectedRevision: plan.revision }))
           .status,
@@ -278,7 +279,7 @@ describe("ponte local", () => {
       );
 
       const stateBeforeOk = await readLibraryState(file);
-      const savedAgent = stateBeforeOk.agents.find((x) => x.id === created.id)!;
+      const savedAgent = stateBeforeOk.agents.find((x) => x.common.id === created.id)!;
       expect(savedAgent).toBeTruthy();
 
       const approved = await approvePackFromUi(file, savedAgent, {
@@ -430,7 +431,11 @@ describe("ponte local", () => {
       dirs.push(symlinkProject);
       await symlink(outsideDir, join(symlinkProject, ".agents"));
 
-      await approvePackFromUi(file, { ...agent, name: "Editado no Site" });
+      await approvePackFromUi(
+        file,
+        { ...agent, name: "Editado no Site" },
+        { targetProject: symlinkProject },
+      );
       const blockedSymlink = await fetch(`${base}/export`, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },

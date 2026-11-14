@@ -7,7 +7,7 @@ import {
 } from "@/features/bridge/setup";
 import { serializeBackup } from "@/storage/local";
 import { download } from "@/features/export";
-import type { AgentConfig } from "@/types";
+import type { AgentPackV2 } from "@/types";
 import CodeSnippet from "./ui/code-snippet";
 
 const EXAMPLE_MCP_CONFIG = `{
@@ -27,7 +27,7 @@ export default function BridgeSetup({
   agents,
   port,
 }: {
-  agents: AgentConfig[];
+  agents: AgentPackV2[];
   port: string;
 }) {
   const [platform, setPlatform] = useState<SetupPlatform>("posix");

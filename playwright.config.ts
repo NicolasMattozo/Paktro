@@ -1,4 +1,8 @@
 import { defineConfig } from "@playwright/test";
+
+const port = Number(process.env.AGEX_E2E_PORT || 3100);
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: "./tests/browser",
   fullyParallel: false,
@@ -6,15 +10,15 @@ export default defineConfig({
   timeout: 30000,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:3100",
+    baseURL,
     launchOptions: {
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     },
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "node scripts/serve.mjs --port 3100",
-    url: "http://127.0.0.1:3100",
+    command: `node scripts/serve.mjs --port ${port}`,
+    url: baseURL,
     reuseExistingServer: false,
   },
   projects: [

@@ -1,239 +1,321 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  configSchema,
-  slugSchema,
-  slugify,
-  warnings,
-} from "../src/schemas/config";
-import { generateFiles, MAPPING_VERSION } from "../src/generators/antigravity";
-import { MODEL_FAMILIES, MODEL_IDS } from "../src/templates/models";
-import { TOOL_CATALOG, TOOL_NAMES } from "../src/templates/tools";
+  defaultAntigravityTarget,
+  defaultChatGptPluginTarget,
+  defaultClaudeCodeTarget,
+  defaultCodexTarget,
+} from "../src/platforms/common/convert";
+import { slugify } from "../src/platforms/common/paths";
+import { getPlatformAdapter, PLATFORM_ADAPTERS } from "../src/platforms/registry";
+import { TARGET_PLATFORMS } from "../src/platforms/types";
 import {
-  createAgent,
-  RULES,
-  SKILLS,
-  TEMPLATES,
-} from "../src/templates/catalog";
-import type {
-  AgentConfig,
-  McpServer as McpConfig,
-  Rule as RuleConfig,
-  Skill as SkillConfig,
-} from "../src/types";
+  antigravityTargetSchema,
+  chatGptPluginTargetSchema,
+  claudeCodeEffortEnum,
+  claudeCodeModelEnum,
+  claudeCodePermissionModeEnum,
+  claudeCodeTargetSchema,
+  claudeCodeToolEnum,
+  codexModelEnum,
+  codexReasoningEffortEnum,
+  codexTargetSchema,
+  commonMcpSchema,
+  commonRuleSchema,
+  commonSkillSchema,
+  targetPlatformSchema,
+} from "../src/schemas/pack";
+import { createPack, TEMPLATES } from "../src/templates/catalog";
+import { MODEL_IDS } from "../src/templates/models";
+import { TOOL_NAMES } from "../src/templates/tools";
+import type { AgentPackV2, CommonRule, TargetPlatform } from "../src/types";
 import {
   exportApprovedPack,
+  ExportConflictError,
   readLibraryState,
   upsertPackFromAi,
 } from "./store";
 
-const templateIdSchema = z.enum([
-  "reviewer",
-  "frontend",
-  "security",
-  "testing",
-  "generic",
+function jsonResult(data: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+function errorResult(message: string) {
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text: message }],
+  };
+}
+
+const legacyOrCommonRuleInput = z.union([
+  commonRuleSchema,
+  z
+    .object({
+      id: z.string().min(1).max(64),
+      name: z.string().min(1).max(100),
+      description: z.string().max(500).default(""),
+      content: z.string().min(1).max(12000),
+      trigger: z.enum(["always_on", "model_decision", "glob", "manual"]),
+      globs: z.string().max(500).default(""),
+      enabled: z.boolean().default(true),
+    })
+    .strict(),
 ]);
 
-const ruleInputSchema = z.object({
-  id: z.string().max(64).optional(),
-  name: z.string().min(1).max(100),
-  description: z.string().max(1000).optional(),
-  content: z.string().min(1).max(20000),
-  trigger: z.enum(["always_on", "model_decision", "glob", "manual"]).optional(),
-  globs: z.string().max(500).optional(),
-  enabled: z.boolean().optional(),
-});
-
-const skillInputSchema = z.object({
-  id: z.string().max(64).optional(),
-  name: z.string().min(1).max(100),
-  description: z.string().max(1000).optional(),
-  content: z.string().min(1).max(20000),
-  enabled: z.boolean().optional(),
-});
-
-const mcpInputSchema = z.object({
-  id: slugSchema,
-  transport: z.enum(["stdio", "http"]).optional(),
-  command: z.string().max(500).optional(),
-  args: z.array(z.string().max(1000)).max(50).optional(),
-  serverUrl: z.string().max(2000).optional(),
-  enabled: z.boolean().optional(),
-});
-
-function resolveRules(
-  base: RuleConfig[],
-  ruleIds?: string[],
-  customRules?: z.infer<typeof ruleInputSchema>[],
-): RuleConfig[] {
-  if (ruleIds === undefined && customRules === undefined) return base;
-  const fromPresets = (ruleIds ?? []).map((id) => {
-    const preset = RULES.find((r) => r.id === id);
-    if (!preset) throw new Error(`Regra padrão desconhecida: ${id}`);
-    return { ...preset, enabled: true };
-  });
-  const fromCustom = (customRules ?? []).map((r, index) => {
-    const id = slugify(r.id || r.name) || `regra-${index + 1}`;
+function normalizeIncomingRules(
+  rules: z.infer<typeof legacyOrCommonRuleInput>[] | undefined,
+): CommonRule[] | undefined {
+  if (!rules) return undefined;
+  return rules.map((r) => {
+    if ("activation" in r) return r;
+    const activation =
+      r.trigger === "always_on"
+        ? ({ type: "always" } as const)
+        : r.trigger === "model_decision"
+          ? ({ type: "automatic", description: r.description } as const)
+          : r.trigger === "glob"
+            ? ({
+                type: "path",
+                patterns: r.globs
+                  .split(",")
+                  .map((p) => p.trim())
+                  .filter(Boolean),
+              } as const)
+            : ({ type: "manual" } as const);
     return {
-      id,
+      id: r.id,
       name: r.name,
-      description: r.description?.trim() || r.name,
+      description: r.description,
       content: r.content,
-      trigger: r.trigger ?? ("always_on" as const),
-      globs: r.globs ?? "",
-      enabled: r.enabled ?? true,
+      activation,
+      enabled: r.enabled,
     };
   });
-  const merged = new Map<string, RuleConfig>();
-  for (const r of [...fromPresets, ...fromCustom]) merged.set(r.id, r);
-  return [...merged.values()];
 }
 
-function resolveSkills(
-  base: SkillConfig[],
-  skillIds?: string[],
-  customSkills?: z.infer<typeof skillInputSchema>[],
-): SkillConfig[] {
-  if (skillIds === undefined && customSkills === undefined) return base;
-  const fromPresets = (skillIds ?? []).map((id) => {
-    const preset = SKILLS.find((s) => s.id === id);
-    if (!preset) throw new Error(`Skill padrão desconhecida: ${id}`);
-    return { ...preset, enabled: true };
-  });
-  const fromCustom = (customSkills ?? []).map((s, index) => {
-    const id = slugify(s.id || s.name) || `skill-${index + 1}`;
-    return {
-      id,
-      name: s.name,
-      description: s.description?.trim() || s.name,
-      content: s.content,
-      enabled: s.enabled ?? true,
-    };
-  });
-  const merged = new Map<string, SkillConfig>();
-  for (const s of [...fromPresets, ...fromCustom]) merged.set(s.id, s);
-  return [...merged.values()];
-}
+const basePackFieldsShape = {
+  target: targetPlatformSchema.optional(),
+  template: z
+    .enum(["reviewer", "frontend", "security", "testing", "generic"])
+    .optional(),
+  name: z.string().min(1).max(100),
+  slug: z.string().min(1).max(64).optional(),
+  description: z.string().max(2000).optional(),
+  specialty: z.string().max(300).optional(),
+  goal: z.string().max(2000).optional(),
+  instructions: z.string().max(12000).optional(),
+  model: z.string().max(100).optional(),
+  effort: claudeCodeEffortEnum.optional(),
+  reasoningEffort: codexReasoningEffortEnum.optional(),
+  mainAgent: z.boolean().optional(),
+  subagent: z.boolean().optional(),
+  exposure: z.enum(["main", "root", "subagent", "both"]).optional(),
+  tools: z.array(z.string().max(64)).max(30).optional(),
+  disallowedTools: z.array(claudeCodeToolEnum).max(20).optional(),
+  commandExecutionPolicy: z
+    .enum(["sandbox", "off", "auto", "eager"])
+    .optional(),
+  permissionMode: claudeCodePermissionModeEnum.optional(),
+  isolation: z.enum(["none", "worktree"]).optional(),
+  shellTool: z.enum(["inherit", "disabled"]).optional(),
+  includeClaudeMd: z.boolean().optional(),
+  referenceAgentsMd: z.boolean().optional(),
+  includeAgentsMd: z.boolean().optional(),
+  rules: z.array(legacyOrCommonRuleInput).max(30).optional(),
+  skills: z.array(commonSkillSchema).max(30).optional(),
+  mcpServers: z
+    .array(
+      z
+        .object({
+          id: z.string().min(1).max(64),
+          transport: z.enum(["stdio", "http"]),
+          command: z.string().max(200).default(""),
+          args: z.array(z.string().max(300)).max(30).default([]),
+          serverUrl: z.string().max(2000).default(""),
+          enabled: z.boolean().default(true),
+        })
+        .strict(),
+    )
+    .max(20)
+    .optional(),
+  tags: z.array(z.string().max(32)).max(10).optional(),
+  note: z.string().max(1000).optional(),
+};
 
-function resolveMcps(
-  base: McpConfig[],
-  mcps?: z.infer<typeof mcpInputSchema>[],
-): McpConfig[] {
-  if (mcps === undefined) return base;
-  return mcps.map((m) => ({
-    id: m.id,
-    transport: m.transport ?? "stdio",
-    command: m.command ?? "",
-    args: m.args ?? [],
-    serverUrl: m.serverUrl ?? "",
-    enabled: m.enabled ?? true,
-  }));
+function applyTargetPatch(
+  pack: AgentPackV2,
+  target: TargetPlatform,
+  args: {
+    model?: string;
+    effort?: z.infer<typeof claudeCodeEffortEnum>;
+    reasoningEffort?: z.infer<typeof codexReasoningEffortEnum>;
+    mainAgent?: boolean;
+    subagent?: boolean;
+    exposure?: "main" | "root" | "subagent" | "both";
+    tools?: string[];
+    disallowedTools?: z.infer<typeof claudeCodeToolEnum>[];
+    commandExecutionPolicy?: "sandbox" | "off" | "auto" | "eager";
+    permissionMode?: z.infer<typeof claudeCodePermissionModeEnum>;
+    isolation?: "none" | "worktree";
+    shellTool?: "inherit" | "disabled";
+    includeClaudeMd?: boolean;
+    referenceAgentsMd?: boolean;
+    includeAgentsMd?: boolean;
+  },
+): AgentPackV2 {
+  const next = structuredClone(pack);
+  next.target = target;
+
+  if (target === "antigravity") {
+    const base = next.targets.antigravity ?? defaultAntigravityTarget();
+    if (args.tools) {
+      const valid = new Set<string>(TOOL_NAMES);
+      const invalid = args.tools.filter((t) => !valid.has(t));
+      if (invalid.length > 0) {
+        throw new Error(
+          `Ferramentas inválidas para Antigravity: ${invalid.join(", ")}.`,
+        );
+      }
+      base.tools = args.tools as typeof TOOL_NAMES[number][];
+    }
+    if (args.model !== undefined) {
+      if (!(MODEL_IDS as readonly string[]).includes(args.model)) {
+        throw new Error(`Modelo inválido para Antigravity: "${args.model}".`);
+      }
+      base.model = args.model as typeof MODEL_IDS[number];
+    }
+    if (args.mainAgent !== undefined) base.mainAgent = args.mainAgent;
+    if (args.subagent !== undefined) base.subagent = args.subagent;
+    if (args.commandExecutionPolicy !== undefined) {
+      base.commandExecutionPolicy = args.commandExecutionPolicy;
+    }
+    next.targets.antigravity = antigravityTargetSchema.parse(base);
+  }
+
+  if (target === "claude-code") {
+    const base = next.targets.claudeCode ?? defaultClaudeCodeTarget();
+    if (args.tools) {
+      base.tools = args.tools.map((t) => claudeCodeToolEnum.parse(t));
+    }
+    if (args.disallowedTools !== undefined) {
+      base.disallowedTools = args.disallowedTools;
+    }
+    if (args.model !== undefined) {
+      base.model = claudeCodeModelEnum.parse(args.model);
+    }
+    if (args.effort !== undefined) base.effort = args.effort;
+    if (args.exposure === "main" || args.exposure === "subagent" || args.exposure === "both") {
+      base.exposure = args.exposure;
+    } else if (args.exposure === "root") {
+      base.exposure = "main";
+    }
+    if (args.permissionMode !== undefined) {
+      base.permissionMode = args.permissionMode;
+    }
+    if (args.isolation !== undefined) base.isolation = args.isolation;
+    if (args.includeClaudeMd !== undefined) {
+      base.includeClaudeMd = args.includeClaudeMd;
+    }
+    if (args.referenceAgentsMd !== undefined) {
+      base.referenceAgentsMd = args.referenceAgentsMd;
+    }
+    next.targets.claudeCode = claudeCodeTargetSchema.parse(base);
+  }
+
+  if (target === "codex") {
+    const base = next.targets.codex ?? defaultCodexTarget();
+    if (args.tools && args.tools.length > 0) {
+      throw new Error(
+        "Subagentes Codex (.codex/agents/*.toml) não utilizam lista granular de ferramentas 'tools'; configure 'shellTool' ou instruções em AGENTS.md.",
+      );
+    }
+    if (args.model !== undefined) {
+      base.model = codexModelEnum.parse(args.model);
+    }
+    if (args.reasoningEffort !== undefined) {
+      base.reasoningEffort = args.reasoningEffort;
+    }
+    if (args.exposure === "root" || args.exposure === "subagent" || args.exposure === "both") {
+      base.exposure = args.exposure;
+    } else if (args.exposure === "main") {
+      base.exposure = "root";
+    }
+    if (args.shellTool !== undefined) base.shellTool = args.shellTool;
+    if (args.includeAgentsMd !== undefined) {
+      base.includeAgentsMd = args.includeAgentsMd;
+    }
+    next.targets.codex = codexTargetSchema.parse(base);
+  }
+
+  if (target === "chatgpt-plugin") {
+    const base = next.targets.chatgptPlugin ?? defaultChatGptPluginTarget();
+    next.targets.chatgptPlugin = chatGptPluginTargetSchema.parse(base);
+  }
+
+  return next;
 }
 
 export function createMcpServer(file: string) {
   const server = new McpServer({
     name: "agex-bridge",
-    version: "1.0.0",
+    version: "2.0.0",
   });
-  const readOnly = {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  };
-  const writeLibrary = {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: false,
-    openWorldHint: false,
-  };
-  const writeProject = {
-    readOnlyHint: false,
-    destructiveHint: true,
-    idempotentHint: true,
-    openWorldHint: false,
-  };
-
-  const result = (value: unknown) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-  });
-  const errorResult = (message: string) => ({
-    isError: true,
-    content: [{ type: "text" as const, text: message }],
-  });
-
-  async function find(id: string) {
-    const state = await readLibraryState(file);
-    const agent = state.agents.find((a) => a.id === id);
-    if (!agent) throw new Error("Conjunto não encontrado.");
-    return { agent, review: state.reviews[id] };
-  }
 
   server.registerTool(
     "get_studio_catalog",
     {
       description:
-        "Lista templates, modelos de sessão (Gemini 4 Hydrogen/Argon, Gemini 3.8 Flash, Orchestrator Argon, Claude Opus/Sonnet 5.5), ferramentas válidas, regras universais e skills disponíveis no Agex antes de chamar create_agent ou update_agent.",
-      annotations: readOnly,
+        "Lista modelos, ferramentas e políticas suportadas para uma plataforma alvo (antigravity por padrão, ou claude-code, codex, chatgpt-plugin). Sempre consulte antes de criar ou editar.",
+      inputSchema: {
+        target: targetPlatformSchema.optional(),
+      },
+      annotations: { readOnlyHint: true },
     },
-    async () =>
-      result({
-        mappingVersion: MAPPING_VERSION,
+    async ({ target }) => {
+      const selected: TargetPlatform = target ?? "antigravity";
+      const adapter = getPlatformAdapter(selected);
+      return jsonResult({
+        target: selected,
+        supportedTargets: TARGET_PLATFORMS,
+        mappingVersion: adapter.mappingVersion,
+        catalog: adapter.catalog,
         templates: TEMPLATES.map((t) => ({
           id: t.id,
           name: t.name,
-          specialty: t.specialty,
-          goal: t.goal,
-          defaultTools: t.tools,
-          defaultRuleIds: t.rules,
-          defaultSkillIds: t.skills,
+          description: t.description,
         })),
-        models: MODEL_FAMILIES,
-        validModelIds: MODEL_IDS,
-        tools: TOOL_CATALOG,
-        toolNotes:
-          "Não inclua call_mcp_tool manualmente em tools: o Antigravity injeta call_mcp_tool automaticamente quando há servidores MCP ativos e incluí-la no YAML pode falhar no CLI.",
-        presetRules: RULES.map((r) => ({
-          id: r.id,
-          name: r.name,
-          trigger: r.trigger,
-          description: r.description,
-        })),
-        presetSkills: SKILLS.map((s) => ({
-          id: s.id,
-          name: s.name,
-          description: s.description,
-        })),
-        commandExecutionPolicies: ["off", "auto", "eager", "sandbox"],
-        ruleTriggers: ["always_on", "model_decision", "glob", "manual"],
-      }),
+        // Backward-compatible flat fields for existing Antigravity callers
+        validModelIds: adapter.catalog.models.map((m) => m.id),
+        validTools: adapter.catalog.tools.map((t) => t.id),
+        toolNotes: adapter.catalog.toolNotes,
+      });
+    },
   );
 
   server.registerTool(
     "list_packs",
     {
       description:
-        "Lista os conjuntos da biblioteca local do Agex e seus status de revisão/aprovação.",
-      annotations: readOnly,
+        "Lista os pacotes configurados na biblioteca local do Agex com plataforma alvo, versão de mapeamento e status de revisão.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
     },
     async () => {
-      const state = await readLibraryState(file);
-      return result(
-        state.agents.map((a) => {
-          const review = state.reviews[a.id];
-          return {
-            id: a.id,
-            name: a.name,
-            slug: a.slug,
-            description: a.description,
-            model: a.model,
-            updatedAt: a.updatedAt,
-            approvalStatus: review?.effectiveStatus ?? "draft",
-            source: review?.source ?? "studio",
-            targetProject: review?.targetProject,
-          };
-        }),
+      const { agents, reviews } = await readLibraryState(file);
+      return jsonResult(
+        agents.map((a) => ({
+          id: a.common.id,
+          name: a.common.name,
+          slug: a.common.slug,
+          target: a.target,
+          mappingVersion: PLATFORM_ADAPTERS[a.target].mappingVersion,
+          description: a.common.description,
+          tags: a.common.tags,
+          reviewStatus: reviews[a.common.id]?.effectiveStatus ?? "studio",
+          updatedAt: a.common.updatedAt,
+        })),
       );
     },
   );
@@ -242,29 +324,26 @@ export function createMcpServer(file: string) {
     "get_pack",
     {
       description:
-        "Obtém um conjunto, status de aprovação e seus arquivos gerados. Para exportar diretamente no projeto do usuário após aprovação no site, use export_pack_to_project.",
+        "Retorna a configuração completa v2 e os arquivos nativos gerados de um pacote específico.",
       inputSchema: { id: z.string().uuid() },
-      annotations: readOnly,
+      annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
-      const { agent, review } = await find(id);
-      const approvalStatus = review?.effectiveStatus ?? "draft";
-      return result({
-        mappingVersion: MAPPING_VERSION,
-        approval: {
-          status: approvalStatus,
-          stale: review?.stale ?? false,
-          source: review?.source ?? "studio",
-          targetProject: review?.targetProject,
-          approvedAt: review?.approvedAt,
-          note: review?.note,
-        },
-        config: agent,
-        files: generateFiles(agent),
-        applicationInstructions:
-          approvalStatus === "approved"
-            ? "Conjunto aprovado pelo usuário no Agex. Você já pode chamar export_pack_to_project com o id e a pasta do projeto (ou aplicar com suas próprias ferramentas)."
-            : "Conjunto ainda não aprovado para exportação direta. Peça ao usuário para revisar no site Agex e clicar em 'Dar OK (aprovar para exportar)'.",
+      const { agents, reviews } = await readLibraryState(file);
+      const pack = agents.find((a) => a.common.id === id);
+      if (!pack) return errorResult(`Conjunto "${id}" não encontrado.`);
+      const adapter = getPlatformAdapter(pack.target);
+      const validation = adapter.validate(pack);
+      const files = validation.valid ? adapter.generate(pack) : [];
+      return jsonResult({
+        target: pack.target,
+        mappingVersion: adapter.mappingVersion,
+        pack,
+        review: reviews[id] ?? null,
+        valid: validation.valid,
+        errors: validation.errors,
+        warnings: validation.warnings,
+        files,
       });
     },
   );
@@ -272,18 +351,35 @@ export function createMcpServer(file: string) {
   server.registerTool(
     "validate_pack",
     {
-      description: "Valida formato, referências e escolhas do conjunto local.",
-      inputSchema: { id: z.string().uuid() },
-      annotations: readOnly,
+      description:
+        "Valida um pacote salvo na biblioteca ou um payload v2 explícito contra as regras reais da plataforma alvo.",
+      inputSchema: {
+        id: z.string().uuid().optional(),
+        target: targetPlatformSchema.optional(),
+      },
+      annotations: { readOnlyHint: true },
     },
-    async ({ id }) => {
-      const { agent, review } = await find(id);
-      const parsed = configSchema.safeParse(agent);
-      return result({
-        valid: parsed.success,
-        approvalStatus: review?.effectiveStatus ?? "draft",
-        errors: parsed.success ? [] : parsed.error.issues,
-        warnings: warnings(agent),
+    async ({ id, target }) => {
+      if (!id) {
+        return errorResult("Informe o id do pacote salvo para validar.");
+      }
+      const { agents } = await readLibraryState(file);
+      const pack = agents.find((a) => a.common.id === id);
+      if (!pack) return errorResult(`Conjunto "${id}" não encontrado.`);
+      const effectiveTarget = target ?? pack.target;
+      const adapter = getPlatformAdapter(effectiveTarget);
+      const result = adapter.validate({ ...pack, target: effectiveTarget });
+      return jsonResult({
+        id,
+        target: effectiveTarget,
+        mappingVersion: adapter.mappingVersion,
+        valid: result.valid,
+        errors: result.errors,
+        warnings: result.warnings,
+        blockers: result.blockers,
+        filesPreview: result.valid
+          ? adapter.generate({ ...pack, target: effectiveTarget }).map((f) => f.path)
+          : [],
       });
     },
   );
@@ -292,72 +388,69 @@ export function createMcpServer(file: string) {
     "create_agent",
     {
       description:
-        "Cria um novo agente no Agex para o usuário revisar visualmente no site antes de aprovar a exportação. Use get_studio_catalog antes se precisar conferir IDs de modelos, ferramentas, regras e skills.",
-      inputSchema: {
-        template: templateIdSchema.optional(),
-        name: z.string().min(1).max(100),
-        slug: z.string().max(100).optional(),
-        description: z.string().max(2000).optional(),
-        specialty: z.string().max(300).optional(),
-        goal: z.string().max(2000).optional(),
-        instructions: z.string().max(12000).optional(),
-        model: z.enum(MODEL_IDS).optional(),
-        mainAgent: z.boolean().optional(),
-        subagent: z.boolean().optional(),
-        tools: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
-        commandExecutionPolicy: z
-          .enum(["off", "auto", "eager", "sandbox"])
-          .optional(),
-        ruleIds: z.array(z.string()).max(30).optional(),
-        rules: z.array(ruleInputSchema).max(30).optional(),
-        skillIds: z.array(z.string()).max(30).optional(),
-        skills: z.array(skillInputSchema).max(30).optional(),
-        mcpServers: z.array(mcpInputSchema).max(20).optional(),
-        tags: z.array(z.string().max(32)).max(10).optional(),
-        note: z.string().max(1000).optional(),
-        targetProject: z.string().max(4096).optional(),
-      },
-      annotations: writeLibrary,
+        "Cria um novo conjunto multiplataforma (antigravity por padrão, ou claude-code, codex, chatgpt-plugin) como 'pending_review'. Requer Dar OK no site antes de exportar.",
+      inputSchema: basePackFieldsShape,
+      annotations: { readOnlyHint: false },
     },
     async (args) => {
       try {
-        const base = createAgent(args.template ?? "generic");
-        const slug =
-          slugify(args.slug || args.name) || base.slug || "custom-agent";
-        const goal = args.goal?.trim() || base.goal;
-        const candidate: AgentConfig = {
+        const target: TargetPlatform = args.target ?? "antigravity";
+        const base = createPack(args.template ?? "generic", target);
+        const now = new Date().toISOString();
+        const slug = args.slug ? args.slug : slugify(args.name);
+        const normalizedRules = normalizeIncomingRules(args.rules);
+        const normalizedMcp = args.mcpServers?.map((m) => commonMcpSchema.parse(m));
+
+        let nextPack: AgentPackV2 = {
           ...base,
-          name: args.name.trim(),
-          slug,
-          description: args.description?.trim() || goal,
-          specialty: args.specialty?.trim() || base.specialty,
-          goal,
-          instructions: args.instructions ?? base.instructions,
-          model: args.model ?? base.model,
-          mainAgent: args.mainAgent ?? base.mainAgent,
-          subagent: args.subagent ?? base.subagent,
-          tools: args.tools ?? base.tools,
-          commandExecutionPolicy:
-            args.commandExecutionPolicy ?? base.commandExecutionPolicy,
-          rules: resolveRules(base.rules, args.ruleIds, args.rules),
-          skills: resolveSkills(base.skills, args.skillIds, args.skills),
-          mcpServers: resolveMcps(base.mcpServers, args.mcpServers),
-          tags: args.tags ?? base.tags,
-          updatedAt: new Date().toISOString(),
+          target,
+          common: {
+            ...base.common,
+            id: crypto.randomUUID(),
+            name: args.name,
+            slug,
+            description:
+              args.description ??
+              base.common.description ??
+              `Agente ${args.name}.`,
+            specialty: args.specialty ?? base.common.specialty,
+            goal:
+              args.goal ??
+              args.description ??
+              base.common.goal ??
+              `Executar tarefas de ${args.name}.`,
+            instructions: args.instructions ?? "",
+            rules: normalizedRules ?? base.common.rules,
+            skills: args.skills ?? base.common.skills,
+            mcpServers: normalizedMcp ?? base.common.mcpServers,
+            tags: args.tags ?? base.common.tags,
+            updatedAt: now,
+          },
         };
-        const saved = await upsertPackFromAi(file, candidate, {
+        nextPack = applyTargetPatch(nextPack, target, args);
+
+        const adapter = getPlatformAdapter(target);
+        const validation = adapter.validate(nextPack);
+        if (!validation.valid) {
+          return errorResult(validation.errors.join("; "));
+        }
+
+        const saved = await upsertPackFromAi({
+          file,
+          pack: nextPack,
           note: args.note,
-          targetProject: args.targetProject,
         });
-        return result({
-          id: saved.agent.id,
-          name: saved.agent.name,
-          slug: saved.agent.slug,
-          approvalStatus: saved.review?.status ?? "pending_review",
-          warnings: warnings(saved.agent),
-          filesPreview: generateFiles(saved.agent).map((f) => f.path),
-          nextStepForUser:
-            "Agente enviado para o Agex em estado 'pending_review'. Peça ao usuário para abrir o site Agex conectado à ponte, revisar o agente e clicar em 'Dar OK (aprovar para exportar)' antes de chamar export_pack_to_project.",
+        return jsonResult({
+          id: saved.pack.common.id,
+          name: saved.pack.common.name,
+          slug: saved.pack.common.slug,
+          target: saved.pack.target,
+          mappingVersion: adapter.mappingVersion,
+          approvalStatus: saved.review.effectiveStatus,
+          filesPreview: adapter.generate(saved.pack).map((f) => f.path),
+          warnings: validation.warnings,
+          nextStep:
+            "Peça ao usuário para revisar o pacote no site Agex e clicar em 'Dar OK (aprovar para exportar)' antes de chamar export_pack_to_project.",
         });
       } catch (e) {
         return errorResult(
@@ -371,74 +464,75 @@ export function createMcpServer(file: string) {
     "update_agent",
     {
       description:
-        "Atualiza um agente existente no Agex. Qualquer alteração feita pela IA exige nova revisão e aprovação (Dar OK) do usuário no site antes de exportar.",
+        "Atualiza um pacote existente na biblioteca local e marca a revisão como 'pending_review' (invalida o OK anterior).",
       inputSchema: {
         id: z.string().uuid(),
-        name: z.string().min(1).max(100).optional(),
-        slug: z.string().max(100).optional(),
-        description: z.string().max(2000).optional(),
-        specialty: z.string().max(300).optional(),
-        goal: z.string().max(2000).optional(),
-        instructions: z.string().max(12000).optional(),
-        model: z.enum(MODEL_IDS).optional(),
-        mainAgent: z.boolean().optional(),
-        subagent: z.boolean().optional(),
-        tools: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
-        commandExecutionPolicy: z
-          .enum(["off", "auto", "eager", "sandbox"])
-          .optional(),
-        ruleIds: z.array(z.string()).max(30).optional(),
-        rules: z.array(ruleInputSchema).max(30).optional(),
-        skillIds: z.array(z.string()).max(30).optional(),
-        skills: z.array(skillInputSchema).max(30).optional(),
-        mcpServers: z.array(mcpInputSchema).max(20).optional(),
-        tags: z.array(z.string().max(32)).max(10).optional(),
-        note: z.string().max(1000).optional(),
-        targetProject: z.string().max(4096).optional(),
+        ...basePackFieldsShape,
+        name: basePackFieldsShape.name.optional(),
       },
-      annotations: writeLibrary,
+      annotations: { readOnlyHint: false },
     },
     async (args) => {
       try {
-        const { agent: current, review } = await find(args.id);
-        const nextName = args.name?.trim() || current.name;
-        const nextSlug =
-          args.slug !== undefined
-            ? slugify(args.slug) || current.slug
-            : current.slug;
-        const candidate: AgentConfig = {
-          ...current,
-          name: nextName,
-          slug: nextSlug,
-          description: args.description?.trim() ?? current.description,
-          specialty: args.specialty?.trim() ?? current.specialty,
-          goal: args.goal?.trim() ?? current.goal,
-          instructions: args.instructions ?? current.instructions,
-          model: args.model ?? current.model,
-          mainAgent: args.mainAgent ?? current.mainAgent,
-          subagent: args.subagent ?? current.subagent,
-          tools: args.tools ?? current.tools,
-          commandExecutionPolicy:
-            args.commandExecutionPolicy ?? current.commandExecutionPolicy,
-          rules: resolveRules(current.rules, args.ruleIds, args.rules),
-          skills: resolveSkills(current.skills, args.skillIds, args.skills),
-          mcpServers: resolveMcps(current.mcpServers, args.mcpServers),
-          tags: args.tags ?? current.tags,
-          updatedAt: new Date().toISOString(),
+        const { agents } = await readLibraryState(file);
+        const existing = agents.find((a) => a.common.id === args.id);
+        if (!existing) {
+          return errorResult(`Conjunto "${args.id}" não encontrado.`);
+        }
+        const target: TargetPlatform = args.target ?? existing.target;
+        const normalizedRules = normalizeIncomingRules(args.rules);
+        const normalizedMcp = args.mcpServers?.map((m) => commonMcpSchema.parse(m));
+
+        let nextPack: AgentPackV2 = {
+          ...existing,
+          target,
+          common: {
+            ...existing.common,
+            ...(args.name !== undefined ? { name: args.name } : {}),
+            ...(args.slug !== undefined ? { slug: args.slug } : {}),
+            ...(args.description !== undefined
+              ? { description: args.description }
+              : {}),
+            ...(args.specialty !== undefined
+              ? { specialty: args.specialty }
+              : {}),
+            ...(args.goal !== undefined ? { goal: args.goal } : {}),
+            ...(args.instructions !== undefined
+              ? { instructions: args.instructions }
+              : {}),
+            ...(normalizedRules !== undefined ? { rules: normalizedRules } : {}),
+            ...(args.skills !== undefined ? { skills: args.skills } : {}),
+            ...(normalizedMcp !== undefined
+              ? { mcpServers: normalizedMcp }
+              : {}),
+            ...(args.tags !== undefined ? { tags: args.tags } : {}),
+            updatedAt: new Date().toISOString(),
+          },
         };
-        const saved = await upsertPackFromAi(file, candidate, {
-          note: args.note ?? review?.note,
-          targetProject: args.targetProject ?? review?.targetProject,
+        nextPack = applyTargetPatch(nextPack, target, args);
+
+        const adapter = getPlatformAdapter(target);
+        const validation = adapter.validate(nextPack);
+        if (!validation.valid) {
+          return errorResult(validation.errors.join("; "));
+        }
+
+        const saved = await upsertPackFromAi({
+          file,
+          pack: nextPack,
+          note: args.note,
         });
-        return result({
-          id: saved.agent.id,
-          name: saved.agent.name,
-          slug: saved.agent.slug,
-          approvalStatus: saved.review?.status ?? "pending_review",
-          warnings: warnings(saved.agent),
-          filesPreview: generateFiles(saved.agent).map((f) => f.path),
-          nextStepForUser:
-            "Alterações salvas no Agex e marcadas para nova revisão ('pending_review'). Peça ao usuário para conferir no site e dar o OK antes de exportar.",
+        return jsonResult({
+          id: saved.pack.common.id,
+          name: saved.pack.common.name,
+          slug: saved.pack.common.slug,
+          target: saved.pack.target,
+          mappingVersion: adapter.mappingVersion,
+          approvalStatus: saved.review.effectiveStatus,
+          filesPreview: adapter.generate(saved.pack).map((f) => f.path),
+          warnings: validation.warnings,
+          nextStep:
+            "Alterações salvas como pending_review. Solicite novo OK do usuário no site Agex antes de exportar.",
         });
       } catch (e) {
         return errorResult(
@@ -452,25 +546,49 @@ export function createMcpServer(file: string) {
     "export_pack_to_project",
     {
       description:
-        "Exporta os arquivos Antigravity (.agents/ e AGEX-SETUP.md quando aplicável) diretamente para a pasta do projeto de destino. Só executa se o usuário já tiver clicado em 'Dar OK (aprovar para exportar)' nesta exata revisão no site Agex.",
+        "Exporta de forma não destrutiva um pacote aprovado (OK dado no site Agex) para a pasta do projeto. Requer aprovação prévia correspondente à plataforma e conteúdo atuais.",
       inputSchema: {
         id: z.string().uuid(),
         projectPath: z.string().max(4096).optional(),
+        conflictResolution: z
+          .enum(["abort", "append-managed", "overwrite"])
+          .optional(),
+        cleanOrphans: z.boolean().optional(),
+        orphanPaths: z.array(z.string().max(512)).max(100).optional(),
       },
-      annotations: writeProject,
+      annotations: { readOnlyHint: false },
     },
-    async ({ id, projectPath }) => {
+    async ({
+      id,
+      projectPath,
+      conflictResolution,
+      cleanOrphans,
+      orphanPaths,
+    }) => {
       try {
-        const exported = await exportApprovedPack(file, id, projectPath);
-        return result({
-          exported: true,
-          ...exported,
+        const result = await exportApprovedPack(file, {
+          id,
+          projectPath,
+          conflictResolution,
+          cleanOrphans,
+          orphanPaths,
+        });
+        return jsonResult({
+          ok: true,
+          ...result,
         });
       } catch (e) {
+        if (e instanceof ExportConflictError) {
+          return errorResult(
+            JSON.stringify({
+              error: e.message,
+              conflicts: e.conflicts,
+              orphans: e.orphans,
+            }),
+          );
+        }
         return errorResult(
-          e instanceof Error
-            ? e.message
-            : "Não foi possível exportar para o projeto.",
+          e instanceof Error ? e.message : "Erro ao exportar para o projeto.",
         );
       }
     },

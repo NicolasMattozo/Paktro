@@ -1,4 +1,5 @@
-import type { AgentConfig, Rule, Skill } from "../types";
+import type { AgentConfig, AgentPackV2, Rule, Skill, TargetPlatform } from "../types";
+import { convertPackTarget, migrateV1ToV2 } from "../platforms/common/convert";
 export const RULES: Rule[] = [
   {
     id: "project-patterns",
@@ -220,4 +221,13 @@ export function createAgent(templateId = "generic"): AgentConfig {
     tags: [],
     updatedAt: new Date().toISOString(),
   };
+}
+
+export function createPack(
+  templateId = "generic",
+  target: TargetPlatform = "antigravity",
+): AgentPackV2 {
+  const base = migrateV1ToV2(createAgent(templateId));
+  if (target === "antigravity") return base;
+  return convertPackTarget(base, target).pack;
 }

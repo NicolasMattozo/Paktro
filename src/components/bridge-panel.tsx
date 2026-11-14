@@ -1,10 +1,11 @@
 import { useState } from "react";
 import BridgeSetup from "./bridge-setup";
 import { ArrowRight, Plug, RefreshCw, Unplug } from "lucide-react";
-import type { AgentConfig } from "@/types";
+import type { AgentPackV2 } from "@/types";
 import type { ClientReviewInfo } from "@/features/bridge/review";
 import type { BridgePlan } from "@/features/bridge/client";
 import { requestBridgeSync } from "@/features/bridge/client";
+import { PLATFORM_ADAPTERS } from "@/platforms/registry";
 import { serializeBackup } from "@/storage/local";
 
 export default function BridgePanel({
@@ -21,7 +22,7 @@ export default function BridgePanel({
   onOpenAgent,
   notify,
 }: {
-  agents: AgentConfig[];
+  agents: AgentPackV2[];
   reviews: Record<string, ClientReviewInfo>;
   port: string;
   token: string;
@@ -31,7 +32,7 @@ export default function BridgePanel({
   onConnectLive: () => Promise<void>;
   onDisconnectLive: () => void;
   onRefreshLive: () => Promise<void>;
-  onOpenAgent: (agent: AgentConfig) => void;
+  onOpenAgent: (agent: AgentPackV2) => void;
   notify: (text: string) => void;
 }) {
   const [plan, setPlan] = useState<BridgePlan | null>(null);
@@ -39,7 +40,7 @@ export default function BridgePanel({
   const [busy, setBusy] = useState(false);
 
   const pendingAgents = agents.filter(
-    (ag) => reviews[ag.id]?.effectiveStatus === "pending_review",
+    (ag) => reviews[ag.common.id]?.effectiveStatus === "pending_review",
   );
 
   async function requestSync(action: "preview" | "sync") {
@@ -195,8 +196,13 @@ export default function BridgePanel({
               <h3>Aguardando seu OK ({pendingAgents.length})</h3>
               <ul>
                 {pendingAgents.map((ag) => (
-                  <li key={ag.id}>
-                    <span>{ag.name}</span>
+                  <li key={ag.common.id}>
+                    <span>
+                      {ag.common.name}{" "}
+                      <span className="mini-badge">
+                        {PLATFORM_ADAPTERS[ag.target].catalog.shortName}
+                      </span>
+                    </span>
                     <button
                       type="button"
                       className="text-button"

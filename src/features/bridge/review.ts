@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { configSchema } from "../../schemas/config";
-import type { AgentConfig } from "../../types";
+import { ensureAgentPackV2 } from "../../platforms/common/convert";
+import { getPlatformAdapter } from "../../platforms/registry";
+import type { AgentConfig, AgentPackV2 } from "../../types";
 
 export const reviewStatusSchema = z.enum(["pending_review", "approved"]);
 export type ReviewStatus = z.infer<typeof reviewStatusSchema>;
@@ -29,8 +30,18 @@ export type ClientReviewInfo = ReviewRecord & {
   effectiveStatus: "pending_review" | "approved" | "stale";
 };
 
-export function agentContentKey(agent: AgentConfig): string {
-  const normalized = configSchema.parse(agent);
-  return JSON.stringify({ ...normalized, updatedAt: "" });
+export function agentContentKey(
+  agent: AgentPackV2 | AgentConfig,
+  targetProject?: string,
+): string {
+  const pack = ensureAgentPackV2(agent);
+  const adapter = getPlatformAdapter(pack.target);
+  const validation = adapter.validate(pack);
+  if (!validation.valid) {
+    throw new Error(validation.errors[0] ?? "Pacote inválido.");
+  }
+  return JSON.stringify({
+    payload: adapter.approvalSignaturePayload(pack),
+    ...(targetProject ? { targetProject } : {}),
+  });
 }
-

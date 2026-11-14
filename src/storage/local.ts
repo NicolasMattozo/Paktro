@@ -1,59 +1,126 @@
-import { backupSchema, type AgentConfig, type Backup } from "../schemas/config";
-export const STORAGE_KEY = "agex:library:v1";
-export const LEGACY_STORAGE_KEY = "agent-studio:library:v1";
+import { ZodError } from "zod";
+import {
+  ensureAgentPackV2,
+  migrateV1ToV2,
+} from "../platforms/common/convert";
+import { backupSchema } from "../schemas/config";
+import { backupV2Schema } from "../schemas/pack";
+import type { AgentConfig, AgentPackV2 } from "../types";
+
+export const STORAGE_KEY = "agex:library:v2";
+export const LEGACY_STORAGE_KEYS = [
+  "agex:library:v1",
+  "agent-studio:library:v1",
+] as const;
+export const LEGACY_STORAGE_KEY = LEGACY_STORAGE_KEYS[1];
 export const MAX_IMPORT_BYTES = 1024 * 1024;
-export function serializeBackup(agents: AgentConfig[]): string {
-  return (
-    JSON.stringify(
-      backupSchema.parse({ format: "agex", version: 1, agents }),
-      null,
-      2,
-    ) + "\n"
-  );
+
+export function serializeBackup(agents: (AgentPackV2 | AgentConfig)[]): string {
+  const v2Agents = agents.map(ensureAgentPackV2);
+  const payload = backupV2Schema.parse({
+    format: "agex",
+    version: 2,
+    agents: v2Agents,
+  });
+  return JSON.stringify(payload, null, 2);
 }
-export function parseBackup(source: string): Backup {
-  if (new TextEncoder().encode(source).byteLength > MAX_IMPORT_BYTES)
-    throw new Error("O backup deve ter no máximo 1 MB.");
-  let data: unknown;
-  try {
-    data = JSON.parse(source);
-  } catch {
-    throw new Error("O arquivo não contém JSON válido.");
+
+export type ParsedBackup = {
+  format: "agex";
+  version: 2;
+  agents: AgentPackV2[];
+  migratedFromVersion?: 1;
+};
+
+export function parseBackup(raw: string): ParsedBackup {
+  if (new TextEncoder().encode(raw).byteLength > MAX_IMPORT_BYTES) {
+    throw new Error("O arquivo de backup deve ter no máximo 1 MB.");
   }
-  const parsed = backupSchema.safeParse(data);
-  if (!parsed.success)
-    throw new Error(
-      "Backup inválido ou de uma versão incompatível. Use um JSON exportado pelo Agex v1 (ou Agent Studio v1).",
-    );
-  return parsed.data;
-}
-export function readLibrary(storage: Pick<Storage, "getItem">): {
-  agents: AgentConfig[];
-  error?: string;
-} {
+  let parsed: unknown;
   try {
-    const data =
-      storage.getItem(STORAGE_KEY) ?? storage.getItem(LEGACY_STORAGE_KEY);
-    return { agents: data ? parseBackup(data).agents : [] };
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("O arquivo JSON não pôde ser lido. Verifique o formato.");
+  }
+
+  const version =
+    parsed && typeof parsed === "object"
+      ? (parsed as { version?: unknown }).version
+      : undefined;
+
+  try {
+    if (version === 2) {
+      return backupV2Schema.parse(parsed);
+    }
+    if (version === 1) {
+      const legacy = backupSchema.parse(parsed);
+      return {
+        format: "agex",
+        version: 2,
+        agents: legacy.agents.map(migrateV1ToV2),
+        migratedFromVersion: 1,
+      };
+    }
+    throw new Error(
+      "Formato de backup não suportado. Use um arquivo exportado pelo Agex (v1 ou v2).",
+    );
+  } catch (e) {
+    if (e instanceof ZodError) {
+      throw new Error(
+        `Backup inválido ou incompatível: ${e.issues[0]?.message ?? "estrutura incorreta."}`,
+      );
+    }
+    throw e;
+  }
+}
+
+export type LibraryReadResult = {
+  agents: AgentPackV2[];
+  error?: string;
+  migratedFromKey?: string;
+  legacyRawBackup?: string;
+};
+
+export function readLibrary(
+  storage: Pick<Storage, "getItem">,
+): LibraryReadResult {
+  try {
+    const v2Raw = storage.getItem(STORAGE_KEY);
+    if (v2Raw !== null) {
+      if (!v2Raw) return { agents: [] };
+      return { agents: parseBackup(v2Raw).agents };
+    }
+
+    for (const legacyKey of LEGACY_STORAGE_KEYS) {
+      const legacyRaw = storage.getItem(legacyKey);
+      if (legacyRaw === null) continue;
+      if (!legacyRaw) return { agents: [] };
+      const migrated = parseBackup(legacyRaw);
+      return {
+        agents: migrated.agents,
+        migratedFromKey: legacyKey,
+        legacyRawBackup: legacyRaw,
+      };
+    }
+
+    return { agents: [] };
   } catch {
     return {
       agents: [],
       error:
-        "Não foi possível ler os rascunhos. Os dados existentes foram preservados. Exporte um backup antes de tentar salvar novamente.",
+        "Não foi possível ler os agentes salvos. Os dados existentes foram preservados para evitar perda. Faça backup antes de continuar.",
     };
   }
 }
+
 export function saveLibrary(
   storage: Pick<Storage, "setItem">,
-  agents: AgentConfig[],
-): string | null {
+  agents: (AgentPackV2 | AgentConfig)[],
+): string | undefined {
   try {
-    const data = serializeBackup(agents);
-    if (new TextEncoder().encode(data).byteLength > MAX_IMPORT_BYTES)
-      return "A biblioteca atingiu 1 MB. Exporte um backup e remova itens para continuar salvando.";
-    storage.setItem(STORAGE_KEY, data);
-    return null;
+    storage.setItem(STORAGE_KEY, serializeBackup(agents));
+    return undefined;
   } catch {
-    return "Não foi possível salvar neste navegador. O armazenamento pode estar indisponível ou cheio. Exporte um backup JSON para guardar seu trabalho.";
+    return "Não foi possível salvar no navegador (armazenamento cheio ou indisponível). Exporte um backup em JSON agora para não perder alterações.";
   }
 }

@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
 test("criar, editar, prévia, exportar, recarregar e importar backup", async ({
   page,
+  baseURL,
 }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const external: string[] = [];
   page.on("request", (r) => {
     if (
-      !r.url().startsWith("http://127.0.0.1:3100") &&
+      !r.url().startsWith(baseURL ?? "http://127.0.0.1:3100") &&
       !r.url().startsWith("blob:")
     )
       external.push(r.url());

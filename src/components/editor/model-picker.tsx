@@ -1,188 +1,325 @@
-import { useEffect, useState } from "react";
-import CodeSnippet from "../ui/code-snippet";
-import type { AgentConfig } from "@/types";
+import { useState } from "react";
+import { Terminal, Copy, Check, Info } from "lucide-react";
+import { PLATFORM_ADAPTERS } from "@/platforms/registry";
+import { defaultAntigravityTarget, defaultClaudeCodeTarget, defaultCodexTarget } from "@/platforms/common/convert";
+import type {
+  AgentPackV2,
+  ClaudeCodeTargetConfig,
+  CodexTargetConfig,
+} from "@/types";
 import {
-  MODEL_FAMILIES,
   findModelFamily,
   isSessionModel,
+  MODEL_FAMILIES,
   modelLabel,
+  modelTier,
   sessionCommand,
   type ModelFamilyOption,
   type ModelId,
 } from "@/templates/models";
 
-const TIER_FAMILIES = MODEL_FAMILIES.filter((f) => !f.session);
-const SESSION_FAMILIES = MODEL_FAMILIES.filter((f) => f.session);
+const BASE_MODELS: {
+  id: Extract<ModelId, "inherit" | "flash" | "pro">;
+  label: string;
+  desc: string;
+}[] = [
+  { id: "inherit", label: "Herdar sessão", desc: "Usa o modelo padrão ativo no App" },
+  { id: "flash", label: "Flash", desc: "Rápido e econômico para código direto" },
+  { id: "pro", label: "Pro", desc: "Raciocínio mais profundo para análise" },
+];
 
-export default function ModelPicker({
-  agent,
-  update,
-}: {
-  agent: AgentConfig;
-  update: (patch: Partial<AgentConfig>) => void;
-}) {
-  const family = findModelFamily(agent.model);
-  const sessionActive = isSessionModel(agent.model);
-  const [sessionOpen, setSessionOpen] = useState(sessionActive);
+type Props = {
+  pack: AgentPackV2;
+  updatePack: (next: AgentPackV2) => void;
+};
 
-  useEffect(() => {
-    if (sessionActive) setSessionOpen(true);
-  }, [sessionActive]);
+export default function ModelPicker({ pack, updatePack }: Props) {
+  const [copiedCmd, setCopiedCmd] = useState(false);
 
-  const renderOption = (option: ModelFamilyOption, wide = false) => (
-    <button
-      type="button"
-      key={option.id}
-      className={`model-option ${wide ? "model-option-wide " : ""}${family.id === option.id ? "selected" : ""}`}
-      aria-pressed={family.id === option.id}
-      onClick={() => update({ model: option.defaultModel })}
-    >
-      <span className="radio-dot" />
-      <strong>{option.name}</strong>
-      <small>{option.description}</small>
-    </button>
-  );
+  if (pack.target === "chatgpt-plugin") {
+    return (
+      <div className="field">
+        <span>Modelo e execução</span>
+        <div className="info-box compact-info">
+          <Info size={16} />
+          <p>
+            Plugins e skills para ChatGPT não fixam modelo de IDE no{" "}
+            <code>plugin.json</code> — executam no modelo selecionado pelo usuário na
+            conversa do ChatGPT.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (pack.target === "claude-code") {
+    const cc = pack.targets.claudeCode ?? defaultClaudeCodeTarget(pack.common.capabilityIntents);
+    const catalog = PLATFORM_ADAPTERS["claude-code"].catalog;
+    const patchCc = (patch: Partial<ClaudeCodeTargetConfig>) =>
+      updatePack({
+        ...pack,
+        targets: {
+          ...pack.targets,
+          claudeCode: { ...cc, ...patch },
+        },
+      });
+
+    return (
+      <div className="field">
+        <span>Modelo no Claude Code</span>
+        <div className="model-grid platform-model-grid">
+          {catalog.models.map((m) => (
+            <button
+              type="button"
+              key={m.id}
+              className={`model-card ${cc.model === m.id ? "active" : ""}`}
+              aria-pressed={cc.model === m.id}
+              onClick={() =>
+                patchCc({ model: m.id as ClaudeCodeTargetConfig["model"] })
+              }
+            >
+              <strong>{m.label}</strong>
+              <small>{m.badge ?? m.id}</small>
+            </button>
+          ))}
+        </div>
+        <label className="field" style={{ marginTop: 10 }}>
+          Nível de esforço (effort no frontmatter)
+          <select
+            value={cc.effort}
+            onChange={(e) =>
+              patchCc({
+                effort: e.target.value as ClaudeCodeTargetConfig["effort"],
+              })
+            }
+          >
+            {(catalog.efforts ?? []).map((ef) => (
+              <option key={ef.id} value={ef.id}>
+                {ef.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <small>
+          O subagente grava <code>model</code> com aliases oficiais (<code>sonnet</code>,{" "}
+          <code>opus</code>, <code>haiku</code>, <code>inherit</code>) ou IDs Claude verificados.
+        </small>
+      </div>
+    );
+  }
+
+  if (pack.target === "codex") {
+    const cx = pack.targets.codex ?? defaultCodexTarget();
+    const catalog = PLATFORM_ADAPTERS.codex.catalog;
+    const patchCx = (patch: Partial<CodexTargetConfig>) =>
+      updatePack({
+        ...pack,
+        targets: {
+          ...pack.targets,
+          codex: { ...cx, ...patch },
+        },
+      });
+
+    return (
+      <div className="field">
+        <span>Modelo e raciocínio no Codex</span>
+        <div className="model-grid platform-model-grid">
+          {catalog.models.map((m) => (
+            <button
+              type="button"
+              key={m.id}
+              className={`model-card ${cx.model === m.id ? "active" : ""}`}
+              aria-pressed={cx.model === m.id}
+              onClick={() =>
+                patchCx({ model: m.id as CodexTargetConfig["model"] })
+              }
+            >
+              <strong>{m.label}</strong>
+              <small>{m.badge ?? m.id}</small>
+            </button>
+          ))}
+        </div>
+        <label className="field" style={{ marginTop: 10 }}>
+          Esforço de raciocínio (model_reasoning_effort)
+          <select
+            value={cx.reasoningEffort}
+            onChange={(e) =>
+              patchCx({
+                reasoningEffort: e.target
+                  .value as CodexTargetConfig["reasoningEffort"],
+              })
+            }
+          >
+            {(catalog.efforts ?? []).map((ef) => (
+              <option key={ef.id} value={ef.id}>
+                {ef.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <small>
+          Aplicado ao subagente <code>.codex/agents/{pack.common.slug || "agente"}.toml</code>{" "}
+          quando diferente de <code>inherit</code>.
+        </small>
+      </div>
+    );
+  }
+
+  // Google Antigravity (exact preserved UX & test selectors)
+  const ag = pack.targets.antigravity ?? defaultAntigravityTarget(pack.common.capabilityIntents);
+  const currentFamily = findModelFamily(ag.model);
+  const tier = modelTier(ag.model);
+  const isSession = isSessionModel(ag.model);
+
+  const setAntigravityModel = (model: ModelId) =>
+    updatePack({
+      ...pack,
+      targets: {
+        ...pack.targets,
+        antigravity: { ...ag, model },
+      },
+    });
+
+  async function copyCommand(cmd: string) {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedCmd(true);
+      setTimeout(() => setCopiedCmd(false), 1800);
+    } catch {
+      // Clipboard blocked in non-HTTPS test context without grant
+    }
+  }
+
+  const pickFamily = (family: ModelFamilyOption) => {
+    setAntigravityModel(family.defaultModel);
+  };
+
+  const cmd = sessionCommand(pack.common.slug || "my-agent", ag.model, ag.mainAgent);
 
   return (
     <div className="field model-picker">
       <span>Modelo</span>
-      <div className="model-options">
-        {TIER_FAMILIES.map((option) =>
-          renderOption(option, option.id === "inherit"),
-        )}
+      <div className="model-grid">
+        {BASE_MODELS.map((m) => (
+          <button
+            type="button"
+            key={m.id}
+            className={`model-card ${tier === m.id && !isSession ? "active" : ""}`}
+            aria-pressed={tier === m.id && !isSession}
+            onClick={() => setAntigravityModel(m.id)}
+          >
+            <strong>{m.label}</strong>
+            <small>{m.desc}</small>
+          </button>
+        ))}
       </div>
-      <small>
-        Estes são os valores gravados diretamente no <code>.md</code> (
-        <code>inherit</code>, <code>flash</code> ou <code>pro</code>). Para
-        manter Claude ou o modelo ativo na conversa, escolha{" "}
-        <strong>Herdar modelo</strong>; <code>Flash</code> e <code>Pro</code>{" "}
-        roteiam subagentes para tiers Gemini.
-      </small>
 
-      <details
-        className="session-models"
-        open={sessionOpen}
-        onToggle={(e) => setSessionOpen(e.currentTarget.open)}
-      >
+      <details className="session-models" open={isSession || undefined}>
         <summary>
           <span>Preferência de sessão (opcional)</span>
-          <span className={`mini-badge ${sessionActive ? "is-session" : ""}`}>
-            {sessionActive
-              ? modelLabel(agent.model)
-              : "Gemini, Orchestrator e Claude"}
+          <span className="mini-badge">
+            {isSession ? modelLabel(ag.model) : "Opcional · CLI"}
           </span>
         </summary>
         <div className="session-models-body">
-          <p className="session-models-intro">
-            Registra qual modelo e força você pretende usar na sessão ao abrir
-            este agente (exporta <code>model: inherit</code> no <code>.md</code>{" "}
-            e gera <code>AGEX-SETUP.md</code>).
+          <p className="session-help">
+            O YAML de subagentes do Antigravity aceita apenas <code>inherit</code>,{" "}
+            <code>flash</code> ou <code>pro</code>. Escolha um modelo específico aqui para
+            gerar o comando pronto do CLI e incluí-lo em <code>AGEX-SETUP.md</code>.
           </p>
-          <div className="model-options">
-            {SESSION_FAMILIES.map((option) => renderOption(option))}
+
+          <div className="session-family-grid">
+            <ModelFamiliesRow
+              selectedId={isSession ? currentFamily.id : undefined}
+              onPick={pickFamily}
+            />
           </div>
 
-          {sessionActive && (
-            <div className="model-setup">
-              {family.levels.length > 0 ? (
+          {isSession && (
+            <div className="effort-and-command">
+              {currentFamily.levels.length > 0 && (
                 <label className="field">
                   Nível de raciocínio
                   <select
-                    value={agent.model}
-                    onChange={(e) =>
-                      update({ model: e.target.value as ModelId })
-                    }
+                    value={ag.model}
+                    onChange={(e) => setAntigravityModel(e.target.value as ModelId)}
                   >
-                    {family.levels.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
+                    {currentFamily.levels.map((lv) => (
+                      <option key={lv.id} value={lv.id}>
+                        {lv.label}
                       </option>
                     ))}
                   </select>
                 </label>
-              ) : (
-                <p className="model-single-note">
-                  <strong>Modo único de orquestração:</strong> combina
-                  planejamento Argon com execução rápida automaticamente, sem
-                  seleção manual de força em <code>agy models</code>.
-                </p>
               )}
-              <p>
-                <strong>No App ou IDE (sem comando):</strong> basta selecionar
-                este modelo{family.levels.length > 0 ? " e a força" : ""} no menu
-                abaixo da caixa de mensagem
-                {family.xhighAsExtra ? (
-                  <>
-                    {" "}
-                    (em Hydrogen, <code>xhigh</code> aparece como <b>Extra</b>)
-                  </>
-                ) : null}
-                . Não é necessário rodar nada no terminal.
-              </p>
-              <p>
-                <strong>Apenas se você usar o CLI (<code>agy</code>):</strong>{" "}
-                inicie o terminal já com essa escolha usando o comando abaixo (se
-                quiser conferir antes, rode <code>agy models</code>):
-              </p>
-              <CodeSnippet
-                label="Comando para ativar o modelo no CLI"
-                code={sessionCommand(
-                  agent.slug || "nome-do-agente",
-                  agent.model,
-                  agent.mainAgent,
-                )}
-              />
-              {family.id.startsWith("claude-") && (
-                <p>
-                  Modelos Claude dependem da liberação da conta/plano ou do
-                  projeto Google Cloud ativo.
-                </p>
-              )}
-              {agent.subagent && (
-                <p>
-                  Como subagente, ele herda o modelo da sessão que delega a
-                  tarefa (é isso que permite rodar em Claude ou no modelo ativo
-                  da sessão principal). A escolha desta tela não troca uma
-                  sessão já aberta.
-                </p>
-              )}
-              <p>
-                O ZIP inclui <code>AGEX-SETUP.md</code> com estas instruções. A
-                disponibilidade depende da sua conta e da versão instalada.
-              </p>
+
+              <div className="session-cmd-box">
+                <div className="session-cmd-head">
+                  <span>
+                    <Terminal size={13} />
+                    Comando sugerido no CLI
+                  </span>
+                  <button
+                    type="button"
+                    className="inline-button"
+                    onClick={() => copyCommand(cmd)}
+                  >
+                    {copiedCmd ? <Check size={13} /> : <Copy size={13} />}
+                    {copiedCmd ? "Copiado" : "Copiar"}
+                  </button>
+                </div>
+                <pre
+                  tabIndex={0}
+                  aria-label="Comando para ativar o modelo no CLI"
+                  className="session-cmd-code"
+                >
+                  <code>{cmd}</code>
+                </pre>
+                <small>
+                  No arquivo <code>.md</code> gerado será gravado{" "}
+                  <code>model: inherit</code>, preservando o modelo real no{" "}
+                  <code>AGEX-SETUP.md</code> e no <code>agex.json</code>.
+                </small>
+              </div>
             </div>
           )}
         </div>
       </details>
-
-      <small>
-        Identificadores conferidos na documentação e com{" "}
-        <code>agy models</code> em 13/11/2026 (GPT-OSS omitido; outros modelos
-        dependem da conta/autenticação).{" "}
-        <a
-          href="https://antigravity.google/docs/models"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Modelos no Antigravity
-        </a>{" "}
-        ·{" "}
-        <a
-          href="https://antigravity.google/docs/cli/headless/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Como escolher no CLI
-        </a>{" "}
-        ·{" "}
-        <a
-          href="https://antigravity.google/docs/subagents"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Campo model do agente
-        </a>
-      </small>
     </div>
+  );
+}
+
+function ModelFamiliesRow({
+  selectedId,
+  onPick,
+}: {
+  selectedId?: string;
+  onPick: (f: ModelFamilyOption) => void;
+}) {
+  return (
+    <>
+      {MODEL_FAMILIES.filter((f) => f.session).map((f) => {
+        const badge = f.xhighAsExtra
+          ? "Low–Extra"
+          : f.levels.length > 0
+            ? "Low–High"
+            : "Sessão";
+        return (
+          <button
+            type="button"
+            key={f.id}
+            className={`model-card session-family-card ${selectedId === f.id ? "active" : ""}`}
+            aria-pressed={selectedId === f.id}
+            onClick={() => onPick(f)}
+          >
+            <span className="session-card-top">
+              <strong>{f.name}</strong>
+              <span className="mini-badge">{badge}</span>
+            </span>
+            <small>{f.description}</small>
+          </button>
+        );
+      })}
+    </>
   );
 }

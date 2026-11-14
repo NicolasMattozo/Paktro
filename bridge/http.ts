@@ -1,221 +1,279 @@
-import { createServer, type IncomingMessage } from "node:http";
+import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { backupSchema, configSchema } from "../src/schemas/config";
-import { MAX_IMPORT_BYTES } from "../src/storage/local";
+import { ensureAgentPackV2 } from "../src/platforms/common/convert";
+import { configSchema, draftSchema } from "../src/schemas/config";
+import { packDraftSchema, packSchema } from "../src/schemas/pack";
+import { MAX_IMPORT_BYTES, parseBackup } from "../src/storage/local";
 import {
   approvePackFromUi,
   exportApprovedPack,
+  ExportConflictError,
   planMerge,
   readLibraryState,
-  readStore,
-  withStoreLock,
-  writeStore,
+  syncFromUi,
 } from "./store";
 
-const syncRequestSchema = z
+function constantEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+const syncBodySchema = z
   .object({
-    backup: backupSchema,
-    expectedRevision: z.string().max(64).optional(),
+    backup: z.unknown(),
+    expectedRevision: z.string().max(128).optional(),
   })
   .strict();
 
-const approveRequestSchema = z
+const approveBodySchema = z
   .object({
-    agent: configSchema,
+    agent: z.union([packSchema, configSchema]),
     targetProject: z.string().max(4096).optional(),
     expectedRevision: z.string().max(128).optional(),
   })
   .strict();
 
-const exportRequestSchema = z
+const exportBodySchema = z
   .object({
     id: z.string().uuid(),
     projectPath: z.string().max(4096).optional(),
+    conflictResolution: z
+      .enum(["abort", "append-managed", "overwrite"])
+      .optional(),
+    cleanOrphans: z.boolean().optional(),
+    orphanPaths: z.array(z.string().max(512)).max(100).optional(),
   })
   .strict();
 
-async function readBody(req: IncomingMessage): Promise<string> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_IMPORT_BYTES) throw new Error("Solicitação maior que 1 MB.");
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf8");
+const rawBackupSyncSchema = z
+  .object({
+    format: z.enum(["agex", "agent-studio"]),
+    version: z.union([z.literal(1), z.literal(2)]),
+    agents: z.array(z.union([packDraftSchema, draftSchema])).max(100),
+  })
+  .strict();
+
+function json(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+  origin: string,
+) {
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  });
+  res.end(JSON.stringify(body));
 }
 
-export function createBridgeHttp({
-  file,
-  token,
-  origin,
-}: {
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let bytes = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_IMPORT_BYTES) {
+        reject(new Error("Corpo excede 1 MB."));
+        req.destroy();
+      } else chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+export function createBridgeHttp(options: {
   file: string;
   token: string;
   origin: string;
 }) {
-  if (token.length < 32)
-    throw new Error("O token precisa ter pelo menos 32 caracteres.");
-  const parsed = new URL(origin);
-  if (
-    !["http:", "https:"].includes(parsed.protocol) ||
-    parsed.origin !== origin
-  )
-    throw new Error("Defina uma origem HTTP(S) exata, sem caminho.");
-  let writes = Promise.resolve();
-  return createServer(async (req, res) => {
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    const send = (status: number, data: unknown) => {
-      res.writeHead(status);
-      res.end(JSON.stringify(data));
-    };
-    if (
-      !/^127\.0\.0\.1:\d+$/.test(req.headers.host ?? "") ||
-      req.headers.origin !== origin
-    ) {
-      send(403, { error: "Origem ou host não autorizado." });
-      return;
-    }
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    if (req.method === "OPTIONS") {
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST");
-      res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization",
+  if (!options.token || options.token.length < 32) {
+    throw new Error(
+      "Defina um token forte (32+ caracteres) antes de abrir a ponte.",
+    );
+  }
+  if (!options.origin || options.origin === "*") {
+    throw new Error("Defina a origem exata permitida para a ponte.");
+  }
+
+  return http.createServer(async (req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (req.headers.origin !== options.origin) {
+      return json(
+        res,
+        403,
+        { error: "Origem não autorizada." },
+        options.origin,
       );
-      res.setHeader("Access-Control-Allow-Private-Network", "true");
-      res.writeHead(204);
-      res.end();
-      return;
     }
-    const auth = Buffer.from(req.headers.authorization ?? "");
-    const expected = Buffer.from(`Bearer ${token}`);
-    if (auth.length !== expected.length || !timingSafeEqual(auth, expected)) {
-      send(401, { error: "Token inválido." });
-      return;
-    }
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (req.method === "GET" && url.pathname === "/library") {
-      try {
-        const state = await readLibraryState(file);
-        const since = url.searchParams.get("since");
-        if (since && since === state.revision) {
-          send(200, { changed: false, revision: state.revision });
-          return;
-        }
-        send(200, {
-          changed: true,
-          revision: state.revision,
-          agents: state.agents,
-          reviews: state.reviews,
-        });
-      } catch (e) {
-        send(400, {
-          error:
-            e instanceof Error ? e.message : "Erro ao ler a biblioteca local.",
-        });
-      }
-      return;
+    if (req.method === "OPTIONS") {
+      return json(res, 200, { ok: true }, options.origin);
     }
     if (
-      req.method !== "POST" ||
-      !["/preview", "/sync", "/approve", "/export"].includes(url.pathname)
+      !constantEqual(
+        req.headers.authorization || "",
+        `Bearer ${options.token}`,
+      )
     ) {
-      send(404, { error: "Rota não disponível." });
-      return;
+      return json(
+        res,
+        401,
+        { error: "Token da ponte inválido." },
+        options.origin,
+      );
     }
-    if (!req.headers["content-type"]?.startsWith("application/json")) {
-      send(415, { error: "Envie JSON." });
-      return;
-    }
+
     try {
-      const rawJson = JSON.parse(await readBody(req));
+      if (req.method === "GET" && url.pathname === "/library") {
+        const since = url.searchParams.get("since") ?? "";
+        const state = await readLibraryState(options.file);
+        if (since && since === state.revision) {
+          return json(
+            res,
+            200,
+            { changed: false, revision: state.revision },
+            options.origin,
+          );
+        }
+        return json(
+          res,
+          200,
+          {
+            changed: true,
+            revision: state.revision,
+            agents: state.agents,
+            reviews: state.reviews,
+          },
+          options.origin,
+        );
+      }
+
+      if (req.method !== "POST") {
+        return json(
+          res,
+          404,
+          { error: "Rota não encontrada." },
+          options.origin,
+        );
+      }
+
+      const body = JSON.parse(await readBody(req));
+
       if (url.pathname === "/approve") {
-        const body = approveRequestSchema.parse(rawJson);
-        const operation = async () => {
-          const outcome = await approvePackFromUi(file, body.agent, {
-            targetProject: body.targetProject,
-            expectedRevision: body.expectedRevision,
-          });
-          if (outcome.conflict) {
-            send(409, {
+        const parsed = approveBodySchema.parse(body);
+        const pack = ensureAgentPackV2(parsed.agent);
+        const outcome = await approvePackFromUi(options.file, pack, {
+          targetProject: parsed.targetProject,
+          expectedRevision: parsed.expectedRevision,
+        });
+        if (outcome.conflict) {
+          return json(
+            res,
+            409,
+            {
               error:
-                "A biblioteca mudou antes da aprovação. Confira as alterações recebidas e tente novamente.",
-            });
-            return;
-          }
-          send(200, {
+                "A biblioteca mudou na ponte enquanto você revisava. Atualize antes de aprovar.",
+              revision: outcome.currentRevision,
+            },
+            options.origin,
+          );
+        }
+        return json(
+          res,
+          200,
+          {
             ok: true,
-            id: outcome.agent.id,
+            id: pack.common.id,
             revision: outcome.revision,
             review: outcome.review,
-          });
-        };
-        const pending = writes.then(operation);
-        writes = pending.catch(() => {});
-        await pending;
-        return;
+          },
+          options.origin,
+        );
       }
 
       if (url.pathname === "/export") {
-        const body = exportRequestSchema.parse(rawJson);
-        const operation = async () => {
-          const exported = await exportApprovedPack(
-            file,
-            body.id,
-            body.projectPath,
-          );
-          send(200, { ok: true, ...exported });
-        };
-        const pending = writes.then(operation);
-        writes = pending.catch(() => {});
-        await pending;
-        return;
+        const parsed = exportBodySchema.parse(body);
+        const exported = await exportApprovedPack(options.file, parsed);
+        return json(
+          res,
+          200,
+          {
+            ok: true,
+            ...exported,
+          },
+          options.origin,
+        );
       }
 
-      const body = syncRequestSchema.parse(rawJson);
-      const operation = async () => {
-        await withStoreLock(file, async () => {
-          const existing = await readStore(file);
-          const merged = planMerge(existing.agents, body.backup.agents);
-          if (url.pathname === "/preview") {
-            send(200, {
-              revision: existing.revision,
-              added: merged.added,
-              changed: merged.changed,
-              unchanged: merged.unchanged,
-            });
-            return;
-          }
-          if (body.expectedRevision !== existing.revision) {
-            send(409, {
-              error: "A biblioteca mudou. Confira as diferenças novamente.",
-            });
-            return;
-          }
-          await writeStore(file, merged.agents);
-          send(200, {
-            ok: true,
-            added: merged.added.length,
-            changed: merged.changed.length,
-          });
-        });
-      };
-      // Serialize comparisons and writes so two clients cannot overwrite a newer revision.
-      const pending = writes.then(operation);
-      writes = pending.catch(() => {});
-      await pending;
+      const parsedSync = syncBodySchema.parse(body);
+      const checkedRaw = rawBackupSyncSchema.parse(parsedSync.backup);
+      const incoming = parseBackup(JSON.stringify(checkedRaw)).agents;
+
+      if (url.pathname === "/preview") {
+        const state = await readLibraryState(options.file);
+        const { added, changed, unchanged } = planMerge(state.agents, incoming);
+        return json(
+          res,
+          200,
+          { revision: state.revision, added, changed, unchanged },
+          options.origin,
+        );
+      }
+
+      if (url.pathname === "/sync") {
+        const outcome = await syncFromUi(
+          options.file,
+          incoming,
+          parsedSync.expectedRevision,
+        );
+        if (outcome.conflict) {
+          return json(
+            res,
+            409,
+            {
+              error:
+                "A biblioteca local mudou após a prévia. Confira novamente.",
+            },
+            options.origin,
+          );
+        }
+        return json(
+          res,
+          200,
+          { ok: true, revision: outcome.revision },
+          options.origin,
+        );
+      }
+
+      return json(
+        res,
+        404,
+        { error: "Rota não encontrada." },
+        options.origin,
+      );
     } catch (e) {
-      send(400, {
-        error:
-          e instanceof Error && !(e instanceof z.ZodError)
-            ? e.message
-            : "Configuração inválida.",
-      });
+      if (e instanceof ExportConflictError) {
+        return json(
+          res,
+          409,
+          {
+            error: e.message,
+            conflicts: e.conflicts,
+            orphans: e.orphans,
+          },
+          options.origin,
+        );
+      }
+      return json(
+        res,
+        400,
+        { error: e instanceof Error ? e.message : "Dados inválidos." },
+        options.origin,
+      );
     }
   });
 }

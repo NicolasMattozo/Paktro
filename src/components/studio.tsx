@@ -28,9 +28,16 @@ import { AgexMark, PackCube, PackLoader } from "./ui/brand";
 import AgentEditor from "./editor/agent-editor";
 import FilePreview from "./preview/file-preview";
 import BridgePanel from "./bridge-panel";
-import { createAgent, RULES, SKILLS, TEMPLATES } from "@/templates/catalog";
-import { configSchema, warnings as getWarnings } from "@/schemas/config";
-import { generateFiles } from "@/generators/antigravity";
+import {
+  createPack,
+  RULES,
+  SKILLS,
+  TEMPLATES,
+} from "@/templates/catalog";
+import {
+  generatePackFiles,
+  PLATFORM_ADAPTERS,
+} from "@/platforms/registry";
 import {
   MAX_IMPORT_BYTES,
   parseBackup,
@@ -40,7 +47,11 @@ import {
   STORAGE_KEY,
 } from "@/storage/local";
 import { createZip, download } from "@/features/export";
-import { importAntigravity } from "@/features/import";
+import {
+  importFromRawFiles,
+  importPlatform,
+  type SafeUploadedFile,
+} from "@/features/import";
 import { modelLabel } from "@/templates/models";
 import {
   agentContentKey,
@@ -48,18 +59,52 @@ import {
 } from "@/features/bridge/review";
 import {
   approveBridgeAgent,
+  BridgeConflictClientError,
   exportBridgeAgent,
   fetchBridgeLibrary,
+  type ExportConflictClient,
 } from "@/features/bridge/client";
-import type { AgentConfig, GeneratedFile } from "@/types";
+import type {
+  AgentPackV2,
+  GeneratedFile,
+  TargetPlatform,
+} from "@/types";
+
 type View = "library" | "templates" | "catalog" | "editor" | "help" | "bridge";
-function safeContentKey(agent: AgentConfig): string {
+
+function safeContentKey(agent: AgentPackV2, targetProject?: string): string {
   try {
-    return agentContentKey(agent);
+    return agentContentKey(agent, targetProject);
   } catch {
     return "";
   }
 }
+
+function summarizePackModel(pack: AgentPackV2): string | null {
+  if (pack.target === "antigravity" && pack.targets.antigravity) {
+    return modelLabel(pack.targets.antigravity.model);
+  }
+  if (pack.target === "claude-code" && pack.targets.claudeCode) {
+    return pack.targets.claudeCode.model === "inherit"
+      ? "Herdar sessão"
+      : pack.targets.claudeCode.model;
+  }
+  if (pack.target === "codex" && pack.targets.codex) {
+    return pack.targets.codex.model === "inherit"
+      ? "Herdar sessão"
+      : pack.targets.codex.model;
+  }
+  return null;
+}
+
+function packMainPath(pack: AgentPackV2): string {
+  const slug = pack.common.slug || "agente";
+  if (pack.target === "claude-code") return `.claude/agents/${slug}.md`;
+  if (pack.target === "codex") return `.codex/agents/${slug}.toml`;
+  if (pack.target === "chatgpt-plugin") return `plugin.json · skills/${slug}`;
+  return `.agents/agents/${slug}.md`;
+}
+
 function Modal({
   title,
   children,
@@ -92,15 +137,25 @@ function Modal({
     </dialog>
   );
 }
+
 export default function Studio() {
   const [view, setView] = useState<View>("library");
-  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [agents, setAgents] = useState<AgentPackV2[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [defaultTarget, setDefaultTarget] =
+    useState<TargetPlatform>("antigravity");
   const [ready, setReady] = useState(false);
   const [storageError, setStorageError] = useState("");
   const [saveBlocked, setSaveBlocked] = useState(false);
+  const [legacyMigration, setLegacyMigration] = useState<{
+    fromKey: string;
+    rawBackup: string;
+  } | null>(null);
   const [toast, setToast] = useState("");
   const [query, setQuery] = useState("");
+  const [platformFilter, setPlatformFilter] = useState<TargetPlatform | "all">(
+    "all",
+  );
   const [sort, setSort] = useState("recent");
   const [step, setStep] = useState(0);
   const [mobilePreview, setMobilePreview] = useState(false);
@@ -109,6 +164,11 @@ export default function Studio() {
   const [compare, setCompare] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [importNotes, setImportNotes] = useState<string[]>([]);
+  const [ambiguousImport, setAmbiguousImport] = useState<{
+    candidates: TargetPlatform[];
+    files: SafeUploadedFile[];
+    warnings: string[];
+  } | null>(null);
   const [bridgePort, setBridgePort] = useState("4319");
   const [bridgeToken, setBridgeToken] = useState("");
   const [bridgeConnected, setBridgeConnected] = useState(false);
@@ -119,14 +179,32 @@ export default function Studio() {
     {},
   );
   const [bridgeBusy, setBridgeBusy] = useState(false);
+  const [exportConflicts, setExportConflicts] = useState<{
+    packId: string;
+    projectPath: string;
+    conflicts: ExportConflictClient[];
+    orphans: string[];
+  } | null>(null);
+  const [pendingOrphans, setPendingOrphans] = useState<{
+    packId: string;
+    projectPath: string;
+    orphans: string[];
+  } | null>(null);
   const bridgeRevisionRef = useRef("");
   bridgeRevisionRef.current = bridgeRevision;
   const fileInput = useRef<HTMLInputElement>(null);
   const externalInput = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     try {
       const result = readLibrary(localStorage);
       setAgents(result.agents);
+      if (result.migratedFromKey && result.legacyRawBackup) {
+        setLegacyMigration({
+          fromKey: result.migratedFromKey,
+          rawBackup: result.legacyRawBackup,
+        });
+      }
       if (result.error) {
         setStorageError(result.error);
         setSaveBlocked(true);
@@ -139,16 +217,19 @@ export default function Studio() {
     }
     setReady(true);
   }, []);
+
   useEffect(() => {
     if (!ready || saveBlocked) return;
     const err = saveLibrary(localStorage, agents);
     setStorageError(err ?? "");
   }, [agents, ready, saveBlocked]);
+
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 5000);
     return () => clearTimeout(timer);
   }, [toast]);
+
   useEffect(() => {
     function changed(e: StorageEvent) {
       if (e.key === STORAGE_KEY) {
@@ -161,24 +242,29 @@ export default function Studio() {
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
   }, []);
-  const a = agents.find((a) => a.id === activeId);
+
+  const a = agents.find((ag) => ag.common.id === activeId);
+
   const generated = useMemo(() => {
-    if (!a)
+    if (!a) {
       return {
         files: [] as GeneratedFile[],
         errors: [] as string[],
         warnings: [] as string[],
       };
-    const result = configSchema.safeParse(a);
-    if (!result.success)
+    }
+    const adapter = PLATFORM_ADAPTERS[a.target];
+    const validation = adapter.validate(a);
+    if (!validation.valid) {
       return {
-        files: [],
-        errors: result.error.issues.map((i) => i.message),
-        warnings: getWarnings(a),
+        files: [] as GeneratedFile[],
+        errors: validation.errors,
+        warnings: validation.warnings,
       };
+    }
     return {
       files: [
-        ...generateFiles(a),
+        ...adapter.generate(a),
         {
           path: "agex.json",
           kind: "backup" as const,
@@ -186,21 +272,23 @@ export default function Studio() {
         },
       ],
       errors: [],
-      warnings: getWarnings(a),
+      warnings: validation.warnings,
     };
   }, [a]);
+
   function navigate(v: View) {
     setView(v);
     setMenu(false);
   }
-  function open(agent: AgentConfig) {
-    setActiveId(agent.id);
+
+  function open(pack: AgentPackV2) {
+    setActiveId(pack.common.id);
     setStep(0);
     setMobilePreview(false);
     navigate("editor");
   }
-  function commitAgents(next: AgentConfig[]): boolean {
-    // Keep every accepted library state portable through the bounded backup format.
+
+  function commitAgents(next: AgentPackV2[]): boolean {
     try {
       const bytes = new TextEncoder().encode(serializeBackup(next)).byteLength;
       if (bytes > MAX_IMPORT_BYTES) {
@@ -218,45 +306,53 @@ export default function Studio() {
       return false;
     }
   }
-  function create(id = "generic") {
+
+  function create(id = "generic", target: TargetPlatform = defaultTarget) {
     if (agents.length >= 100) {
-      setToast("Limite de 100 agentes. Exporte um backup e remova itens.");
+      setToast("Limite de 100 pacotes. Exporte um backup e remova itens.");
       return;
     }
-    const next = createAgent(id);
+    const next = createPack(id, target);
     if (!commitAgents([next, ...agents])) return;
     open(next);
   }
-  function update(patch: Partial<AgentConfig>) {
+
+  function updatePack(nextPack: AgentPackV2) {
     commitAgents(
       agents.map((x) =>
-        x.id === activeId
-          ? { ...x, ...patch, updatedAt: new Date().toISOString() }
+        x.common.id === activeId
+          ? {
+              ...nextPack,
+              common: {
+                ...nextPack.common,
+                updatedAt: new Date().toISOString(),
+              },
+            }
           : x,
       ),
     );
   }
-  function duplicate(agent: AgentConfig) {
+
+  function duplicate(pack: AgentPackV2) {
     if (agents.length >= 100) {
-      setToast("Limite de 100 agentes atingido.");
+      setToast("Limite de 100 pacotes atingido.");
       return;
     }
-    const next = {
-      ...structuredClone(agent),
-      id: crypto.randomUUID(),
-      name: `${agent.name.slice(0, 90)} (cópia)`,
-      slug: `${agent.slug.slice(0, 57).replace(/-$/, "")}-copy`,
-      updatedAt: new Date().toISOString(),
-    };
-    if (!commitAgents([next, ...agents])) return;
-    open(next);
-    setToast("Agente duplicado.");
+    const copy = structuredClone(pack);
+    copy.common.id = crypto.randomUUID();
+    copy.common.name = `${pack.common.name.slice(0, 90)} (cópia)`;
+    copy.common.slug = `${pack.common.slug.slice(0, 57).replace(/-$/, "")}-copy`;
+    copy.common.updatedAt = new Date().toISOString();
+    if (!commitAgents([copy, ...agents])) return;
+    open(copy);
+    setToast("Pacote duplicado.");
   }
+
   async function exportZip() {
     if (!a) return;
     setBusy(true);
     try {
-      download(await createZip(a), `${a.slug}.zip`);
+      download(await createZip(a), `${a.common.slug}.zip`);
       setToast("ZIP pronto. Extraia os arquivos na raiz do projeto.");
     } catch {
       setToast("Não foi possível gerar o ZIP. Verifique os campos.");
@@ -264,25 +360,52 @@ export default function Studio() {
       setBusy(false);
     }
   }
+
+  function commitImportedPacks(packs: AgentPackV2[], warnings: string[]) {
+    if (agents.length + packs.length > 100) {
+      throw new Error("A importação excederia o limite de 100 pacotes.");
+    }
+    const incoming = packs.map((p) => ({
+      ...p,
+      common: {
+        ...p.common,
+        id: crypto.randomUUID(),
+      },
+    }));
+    if (!commitAgents([...incoming, ...agents])) return;
+    setImportNotes(warnings);
+    setToast(
+      `${incoming.length} pacote(s) importado(s). Os existentes foram preservados.`,
+    );
+  }
+
   async function importFile(file: File | undefined, external = false) {
     if (!file) return;
     try {
-      if (file.size > MAX_IMPORT_BYTES)
+      if (file.size > MAX_IMPORT_BYTES) {
         throw new Error("O arquivo deve ter no máximo 1 MB.");
-      const result = external
-        ? await importAntigravity(file)
-        : { agents: parseBackup(await file.text()).agents, warnings: [] };
-      if (agents.length + result.agents.length > 100)
-        throw new Error("A importação excederia o limite de 100 agentes.");
-      const incoming = result.agents.map((a) => ({
-        ...a,
-        id: crypto.randomUUID(),
-      }));
-      if (!commitAgents([...incoming, ...agents])) return;
-      setImportNotes(result.warnings);
-      setToast(
-        `${incoming.length} agente(s) importado(s). Os existentes foram preservados.`,
-      );
+      }
+      if (!external) {
+        const parsed = parseBackup(await file.text());
+        const notes =
+          parsed.migratedFromVersion === 1
+            ? [
+                "Backup v1 (Antigravity) convertido automaticamente para o formato multiplataforma v2.",
+              ]
+            : [];
+        commitImportedPacks(parsed.agents, notes);
+      } else {
+        const res = await importPlatform(file);
+        if (res.status === "ambiguous") {
+          setAmbiguousImport({
+            candidates: res.candidateTargets,
+            files: res.files,
+            warnings: res.warnings,
+          });
+          return;
+        }
+        commitImportedPacks(res.packs, res.warnings);
+      }
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Não foi possível importar.");
     } finally {
@@ -290,26 +413,51 @@ export default function Studio() {
       if (externalInput.current) externalInput.current.value = "";
     }
   }
+
+  function resolveAmbiguousImport(chosenTarget: TargetPlatform) {
+    if (!ambiguousImport) return;
+    try {
+      const res = importFromRawFiles(ambiguousImport.files, chosenTarget);
+      if (res.status === "ok") {
+        commitImportedPacks(res.packs, [
+          ...ambiguousImport.warnings,
+          ...res.warnings,
+        ]);
+      }
+      setAmbiguousImport(null);
+    } catch (e) {
+      setAmbiguousImport(null);
+      setToast(e instanceof Error ? e.message : "Falha na importação.");
+    }
+  }
+
   const filtered = agents
-    .filter((a) =>
-      `${a.name} ${a.description} ${a.tags.join(" ")}`
+    .filter((ag) => {
+      if (platformFilter !== "all" && ag.target !== platformFilter) {
+        return false;
+      }
+      return `${ag.common.name} ${ag.common.description} ${ag.common.tags.join(" ")} ${ag.target}`
         .toLowerCase()
-        .includes(query.toLowerCase()),
-    )
-    .sort((a, b) =>
+        .includes(query.toLowerCase());
+    })
+    .sort((x, y) =>
       sort === "name"
-        ? a.name.localeCompare(b.name, "pt-BR")
-        : b.updatedAt.localeCompare(a.updatedAt),
+        ? x.common.name.localeCompare(y.common.name, "pt-BR")
+        : y.common.updatedAt.localeCompare(x.common.updatedAt),
     );
-  function effectiveReview(agent: AgentConfig) {
-    const r = reviews[agent.id];
+
+  function effectiveReview(pack: AgentPackV2) {
+    const id = pack.common.id;
+    const r = reviews[id];
     if (!r) return "none" as const;
     if (r.effectiveStatus === "pending_review") return "pending_review" as const;
     if (r.effectiveStatus === "stale") return "stale" as const;
-    return approvedKeys[agent.id] === safeContentKey(agent)
+    const bound = r.targetProject?.trim() || undefined;
+    return approvedKeys[id] === safeContentKey(pack, bound)
       ? ("approved" as const)
       : ("stale" as const);
   }
+
   async function syncFromBridge({ initial = false } = {}) {
     const res = await fetchBridgeLibrary({
       port: bridgePort,
@@ -321,44 +469,45 @@ export default function Studio() {
     setReviews(res.reviews);
     const nextKeys: Record<string, string> = {};
     for (const ag of res.agents) {
-      if (res.reviews[ag.id]?.effectiveStatus === "approved") {
-        const key = safeContentKey(ag);
-        if (key) nextKeys[ag.id] = key;
+      const id = ag.common.id;
+      if (res.reviews[id]?.effectiveStatus === "approved") {
+        const bound = res.reviews[id]?.targetProject?.trim() || undefined;
+        const key = safeContentKey(ag, bound);
+        if (key) nextKeys[id] = key;
       }
     }
     setApprovedKeys((prev) => ({ ...prev, ...nextKeys }));
     setTargetProjects((prev) => {
       const next = { ...prev };
       for (const ag of res.agents) {
-        const tp = res.reviews[ag.id]?.targetProject;
-        if (tp && next[ag.id] === undefined) next[ag.id] = tp;
+        const tp = res.reviews[ag.common.id]?.targetProject;
+        if (tp && next[ag.common.id] === undefined) next[ag.common.id] = tp;
       }
       return next;
     });
     const added: string[] = [];
     const updated: string[] = [];
     setAgents((prev) => {
-      const byId = new Map(prev.map((x) => [x.id, x]));
-      const incomingNew: AgentConfig[] = [];
+      const byId = new Map(prev.map((x) => [x.common.id, x]));
+      const incomingNew: AgentPackV2[] = [];
       for (const remote of res.agents) {
-        const current = byId.get(remote.id);
+        const current = byId.get(remote.common.id);
         if (!current) {
-          added.push(remote.name);
+          added.push(remote.common.name);
           incomingNew.push(remote);
         } else if (
-          remote.updatedAt > current.updatedAt &&
+          remote.common.updatedAt > current.common.updatedAt &&
           JSON.stringify(remote) !== JSON.stringify(current)
         ) {
-          updated.push(remote.name);
-          byId.set(remote.id, remote);
+          updated.push(remote.common.name);
+          byId.set(remote.common.id, remote);
         }
       }
       if (!added.length && !updated.length) return prev;
-      const merged = [
+      return [
         ...incomingNew,
-        ...prev.map((x) => byId.get(x.id) ?? x),
+        ...prev.map((x) => byId.get(x.common.id) ?? x),
       ].slice(0, 100);
-      return merged;
     });
     if (initial) {
       setToast(
@@ -374,6 +523,7 @@ export default function Studio() {
       );
     }
   }
+
   async function connectBridgeLive() {
     try {
       await syncFromBridge({ initial: true });
@@ -387,10 +537,12 @@ export default function Studio() {
       );
     }
   }
+
   function disconnectBridgeLive() {
     setBridgeConnected(false);
     setToast("Conexão ao vivo com a ponte encerrada.");
   }
+
   async function refreshBridgeLive() {
     try {
       await syncFromBridge({ initial: true });
@@ -400,6 +552,7 @@ export default function Studio() {
       );
     }
   }
+
   useEffect(() => {
     if (!bridgeConnected) return;
     let active = true;
@@ -423,32 +576,35 @@ export default function Studio() {
       clearInterval(timer);
     };
   }, [bridgeConnected, bridgePort, bridgeToken]);
+
   async function approveCurrentAgent() {
     if (!a) return;
-    const parsed = configSchema.safeParse(a);
-    if (!parsed.success) {
-      setToast("Corrija os erros do agente antes de dar o OK.");
+    const adapter = PLATFORM_ADAPTERS[a.target];
+    const check = adapter.validate(a);
+    if (!check.valid) {
+      setToast("Corrija os erros do pacote antes de dar o OK.");
       return;
     }
     setBridgeBusy(true);
     try {
       const targetProject =
-        targetProjects[a.id] ?? reviews[a.id]?.targetProject ?? "";
+        targetProjects[a.common.id] ?? reviews[a.common.id]?.targetProject ?? "";
+      const boundProject = targetProject.trim() || undefined;
       const res = await approveBridgeAgent({
         port: bridgePort,
         token: bridgeToken,
-        agent: parsed.data,
-        targetProject: targetProject.trim() || undefined,
+        agent: a,
+        targetProject: boundProject,
         expectedRevision: bridgeRevision || undefined,
       });
       setBridgeRevision(res.revision);
-      setReviews((prev) => ({ ...prev, [a.id]: res.review }));
+      setReviews((prev) => ({ ...prev, [a.common.id]: res.review }));
       setApprovedKeys((prev) => ({
         ...prev,
-        [a.id]: safeContentKey(parsed.data),
+        [a.common.id]: safeContentKey(a, boundProject),
       }));
       setToast(
-        "OK registrado! Agora peça à IA no Antigravity para exportar ou exporte direto abaixo.",
+        `OK registrado (${adapter.catalog.shortName})! Agora você pode exportar direto abaixo ou via MCP.`,
       );
     } catch (e) {
       setToast(
@@ -460,42 +616,100 @@ export default function Studio() {
       setBridgeBusy(false);
     }
   }
-  async function exportCurrentAgentToProject() {
+
+  async function exportCurrentAgentToProject(options?: {
+    conflictResolution?: "abort" | "append-managed" | "overwrite";
+    cleanOrphans?: boolean;
+  }) {
     if (!a) return;
     setBridgeBusy(true);
+    const projectPath =
+      (
+        targetProjects[a.common.id] ??
+        reviews[a.common.id]?.targetProject ??
+        ""
+      ).trim() || undefined;
     try {
-      const projectPath =
-        (targetProjects[a.id] ?? reviews[a.id]?.targetProject ?? "").trim() ||
-        undefined;
       const res = await exportBridgeAgent({
         port: bridgePort,
         token: bridgeToken,
-        id: a.id,
+        id: a.common.id,
         projectPath,
+        ...(options?.conflictResolution
+          ? { conflictResolution: options.conflictResolution }
+          : {}),
+        ...(options?.cleanOrphans ? { cleanOrphans: true } : {}),
       });
+      setExportConflicts(null);
+      if (res.orphans && res.orphans.length > 0) {
+        setPendingOrphans({
+          packId: a.common.id,
+          projectPath: res.projectPath,
+          orphans: res.orphans,
+        });
+      } else {
+        setPendingOrphans(null);
+      }
       setToast(
         `Exportado para ${res.projectPath} (${res.files.length} arquivo(s)).`,
       );
     } catch (e) {
-      setToast(
-        e instanceof Error
-          ? e.message
-          : "Não foi possível exportar para o projeto.",
-      );
+      if (e instanceof BridgeConflictClientError) {
+        setExportConflicts({
+          packId: a.common.id,
+          projectPath: projectPath ?? "",
+          conflicts: e.conflicts,
+          orphans: e.orphans,
+        });
+      } else {
+        setToast(
+          e instanceof Error
+            ? e.message
+            : "Não foi possível exportar para o projeto.",
+        );
+      }
     } finally {
       setBridgeBusy(false);
     }
   }
+
   const pendingReviewCount = agents.filter(
     (ag) => effectiveReview(ag) === "pending_review",
   ).length;
+
+  const targetBar = (
+    <div className="target-switcher" role="group" aria-label="Destino dos novos templates">
+      <span className="target-switcher-label">Destino dos novos templates:</span>
+      <div className="target-switcher-pills">
+        {(
+          [
+            { id: "antigravity", label: "Google Antigravity" },
+            { id: "claude-code", label: "Claude Code" },
+            { id: "codex", label: "OpenAI · Codex" },
+            { id: "chatgpt-plugin", label: "OpenAI · ChatGPT Plugin" },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`target-pill ${defaultTarget === t.id ? "active" : ""}`}
+            aria-pressed={defaultTarget === t.id}
+            onClick={() => setDefaultTarget(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   const templates = (
     <div className="template-grid">
       {TEMPLATES.map((t) => (
         <button
           key={t.id}
           className="template-card"
-          onClick={() => create(t.id)}
+          onClick={() => create(t.id, defaultTarget)}
         >
           <span className="template-card-top">
             <span className={`template-icon ${t.color}`}>
@@ -517,6 +731,7 @@ export default function Studio() {
       ))}
     </div>
   );
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">
@@ -535,11 +750,11 @@ export default function Studio() {
             <span className="brand-wordmark">
               ag<span className="brand-light">ex</span>
             </span>
-            <small>PACKS .AGENTS · PONTE MCP</small>
+            <small>MULTIPLATAFORMA · MCP</small>
           </span>
         </button>
         <div className="workspace-label">
-          WORKSPACE LOCAL <span>v1.0</span>
+          WORKSPACE LOCAL <span>v2.0</span>
         </div>
         <nav className="main-nav" aria-label="Menu principal">
           <button
@@ -596,7 +811,7 @@ export default function Studio() {
           </div>
           <div className="sidebar-footer">
             <span>Feito para construir.</span>
-            <span className="version">v1.0 · MCP</span>
+            <span className="version">v2.0 · MCP</span>
           </div>
         </div>
       </aside>
@@ -676,6 +891,34 @@ export default function Studio() {
               </button>
             </div>
           )}
+          {legacyMigration && !storageError && (
+            <div className="banner migration-banner" role="status">
+              <span>
+                Biblioteca migrada de <code>{legacyMigration.fromKey}</code> para
+                o formato v2 mantendo seus dados originais intactos no navegador.
+              </span>
+              <div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    download(
+                      legacyMigration.rawBackup,
+                      "agex-backup-v1-original.json",
+                      "application/json",
+                    )
+                  }
+                >
+                  Baixar backup v1 original
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLegacyMigration(null)}
+                >
+                  Dispensar
+                </button>
+              </div>
+            </div>
+          )}
           <input
             ref={fileInput}
             type="file"
@@ -687,9 +930,9 @@ export default function Studio() {
           <input
             ref={externalInput}
             type="file"
-            accept=".md,.zip"
+            accept=".md,.toml,.json,.zip"
             className="sr-only"
-            aria-label="Selecionar configuração Antigravity"
+            aria-label="Selecionar pacote ou arquivo para importar"
             onChange={(e) => importFile(e.target.files?.[0], true)}
           />
           {!ready ? (
@@ -710,11 +953,14 @@ export default function Studio() {
                         Seus agentes. <span>Suas possibilidades.</span>
                       </h1>
                       <p>
-                        Transforme suas ideias em agentes prontos para
-                        trabalhar.
+                        Monte pacotes fieis ao formato oficial para Antigravity,
+                        Claude Code, Codex e ChatGPT.
                       </p>
                     </div>
-                    <button className="button primary" onClick={() => create()}>
+                    <button
+                      className="button primary"
+                      onClick={() => create("generic", defaultTarget)}
+                    >
                       <Plus size={18} />
                       Criar agente
                     </button>
@@ -723,7 +969,7 @@ export default function Studio() {
                     <div>
                       <span className="pill">
                         <span className="status-dot" />
-                        AGEX · PARA GOOGLE ANTIGRAVITY
+                        AGEX · MULTIPLATAFORMA
                       </span>
                       <h2>
                         Menos configuração.
@@ -731,9 +977,9 @@ export default function Studio() {
                         <span>Mais criação.</span>
                       </h2>
                       <p>
-                        Escolha um ponto de partida, encaixe regras, skills e
-                        MCPs <br className="desktop-break" />e leve os arquivos
-                        prontos para o seu projeto.
+                        Escolha o destino, encaixe regras, skills e MCPs{" "}
+                        <br className="desktop-break" />e exporte arquivos fieis
+                        para o seu projeto.
                       </p>
                       <button
                         className="button signal"
@@ -762,8 +1008,8 @@ export default function Studio() {
                       </div>
                       <div className="central-agent">
                         <PackCube size={78} seam="#0B0D1A" />
-                        <span>seu-agente.md</span>
-                        <small>PRONTO PARA EXPORTAR</small>
+                        <span>seu-pacote/</span>
+                        <small>ANTIGRAVITY · CLAUDE · CODEX · CHATGPT</small>
                       </div>
                     </div>
                   </section>
@@ -779,6 +1025,7 @@ export default function Studio() {
                       Ver todos <ArrowRight size={15} />
                     </button>
                   </div>
+                  {targetBar}
                   <div className="home-templates">{templates}</div>
                   <section className="library-section">
                     <div className="section-title">
@@ -814,7 +1061,7 @@ export default function Studio() {
                           aria-label="Comparar agentes"
                           disabled={agents.length < 2}
                           onClick={() =>
-                            setCompare(agents.slice(0, 2).map((a) => a.id))
+                            setCompare(agents.slice(0, 2).map((x) => x.common.id))
                           }
                         >
                           <GitCompareArrows size={18} />
@@ -828,9 +1075,26 @@ export default function Studio() {
                           aria-label="Buscar agentes"
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
-                          placeholder="Buscar por nome, descrição ou etiqueta…"
+                          placeholder="Buscar por nome, descrição, destino ou etiqueta…"
                         />
                       </div>
+                      <select
+                        aria-label="Filtrar por plataforma"
+                        value={platformFilter}
+                        onChange={(e) =>
+                          setPlatformFilter(
+                            e.target.value as TargetPlatform | "all",
+                          )
+                        }
+                      >
+                        <option value="all">Todas as plataformas</option>
+                        <option value="antigravity">Google Antigravity</option>
+                        <option value="claude-code">Claude Code</option>
+                        <option value="codex">OpenAI · Codex</option>
+                        <option value="chatgpt-plugin">
+                          OpenAI · ChatGPT Plugin
+                        </option>
+                      </select>
                       <select
                         aria-label="Ordenar agentes"
                         value={sort}
@@ -852,13 +1116,15 @@ export default function Studio() {
                         </h3>
                         <p>
                           {agents.length
-                            ? "Tente outro nome ou etiqueta."
+                            ? "Tente outro nome, destino ou etiqueta."
                             : "Comece com um template ou crie uma configuração do seu jeito."}
                         </p>
                         <button
                           className="text-button"
                           onClick={() =>
-                            agents.length ? setQuery("") : create()
+                            agents.length
+                              ? (setQuery(""), setPlatformFilter("all"))
+                              : create()
                           }
                         >
                           {agents.length
@@ -868,18 +1134,22 @@ export default function Studio() {
                       </div>
                     ) : (
                       <div className="agent-grid">
-                        {filtered.map((agent) => {
-                          const activeRules = agent.rules.filter(
+                        {filtered.map((pack) => {
+                          const c = pack.common;
+                          const activeRules = c.rules.filter(
                             (r) => r.enabled,
                           ).length;
-                          const activeSkills = agent.skills.filter(
+                          const activeSkills = c.skills.filter(
                             (s) => s.enabled,
                           ).length;
-                          const activeMcp = agent.mcpServers.filter(
+                          const activeMcp = c.mcpServers.filter(
                             (m) => m.enabled,
                           ).length;
+                          const modelSummary = summarizePackModel(pack);
+                          const shortTarget =
+                            PLATFORM_ADAPTERS[pack.target].catalog.shortName;
                           return (
-                            <article className="agent-card" key={agent.id}>
+                            <article className="agent-card" key={c.id}>
                               <div className="agent-card-top">
                                 <div className="agent-card-identity">
                                   <span className="pack-avatar">
@@ -890,23 +1160,23 @@ export default function Studio() {
                                     />
                                   </span>
                                   <span className="agent-card-slug">
-                                    agents/{agent.slug || "agente"}.md
+                                    {packMainPath(pack)}
                                   </span>
                                 </div>
                                 <div>
                                   <button
                                     className="icon-button"
-                                    aria-label={`Duplicar ${agent.name}`}
+                                    aria-label={`Duplicar ${c.name}`}
                                     title="Duplicar"
-                                    onClick={() => duplicate(agent)}
+                                    onClick={() => duplicate(pack)}
                                   >
                                     <Copy size={16} />
                                   </button>
                                   <button
                                     className="icon-button danger"
-                                    aria-label={`Excluir ${agent.name}`}
+                                    aria-label={`Excluir ${c.name}`}
                                     title="Excluir"
-                                    onClick={() => setDeleteId(agent.id)}
+                                    onClick={() => setDeleteId(c.id)}
                                   >
                                     <Trash2 size={16} />
                                   </button>
@@ -914,11 +1184,11 @@ export default function Studio() {
                               </div>
                               <button
                                 className="agent-open"
-                                onClick={() => open(agent)}
+                                onClick={() => open(pack)}
                               >
-                                <h3>{agent.name || "Agente sem nome"}</h3>
+                                <h3>{c.name || "Agente sem nome"}</h3>
                                 <p>
-                                  {agent.description ||
+                                  {c.description ||
                                     "Adicione uma descrição ao seu agente."}
                                 </p>
                               </button>
@@ -947,23 +1217,26 @@ export default function Studio() {
                                 )}
                               </div>
                               <div className="agent-tags">
-                                {effectiveReview(agent) ===
+                                <span className={`platform-badge ${pack.target}`}>
+                                  {shortTarget}
+                                </span>
+                                {effectiveReview(pack) ===
                                   "pending_review" && (
                                   <span className="review-pill pending">
                                     Criado pela IA · Aguarda OK
                                   </span>
                                 )}
-                                {effectiveReview(agent) === "approved" && (
+                                {effectiveReview(pack) === "approved" && (
                                   <span className="review-pill approved">
                                     Aprovado para exportar
                                   </span>
                                 )}
-                                {effectiveReview(agent) === "stale" && (
+                                {effectiveReview(pack) === "stale" && (
                                   <span className="review-pill stale">
                                     Alterado · Reaprovar
                                   </span>
                                 )}
-                                <span>{modelLabel(agent.model)}</span>
+                                {modelSummary && <span>{modelSummary}</span>}
                                 <span className="face-tag">
                                   <i
                                     className="face-dot rule"
@@ -987,7 +1260,7 @@ export default function Studio() {
                                     {activeMcp} MCP
                                   </span>
                                 )}
-                                {agent.tags.filter(Boolean).map((t, i) => (
+                                {c.tags.filter(Boolean).map((t, i) => (
                                   <span key={i}>{t}</span>
                                 ))}
                               </div>
@@ -999,11 +1272,11 @@ export default function Studio() {
                                     month: "short",
                                     hour: "2-digit",
                                     minute: "2-digit",
-                                  }).format(new Date(agent.updatedAt))}
+                                  }).format(new Date(c.updatedAt))}
                                 </span>
                                 <button
-                                  onClick={() => open(agent)}
-                                  aria-label={`Editar ${agent.name}`}
+                                  onClick={() => open(pack)}
+                                  aria-label={`Editar ${c.name}`}
                                 >
                                   <ArrowRight size={17} />
                                 </button>
@@ -1018,7 +1291,8 @@ export default function Studio() {
                       onClick={() => externalInput.current?.click()}
                     >
                       <Import size={15} />
-                      Já tem arquivos Antigravity? Importar Markdown ou ZIP
+                      Já tem arquivos Antigravity, Claude Code, Codex ou
+                      ChatGPT? Importar ZIP, Markdown ou TOML
                     </button>
                   </section>
                   <div className="page-footer">
@@ -1039,23 +1313,28 @@ export default function Studio() {
                       </span>
                       <h1>Encontre seu próximo agente.</h1>
                       <p>
-                        Configurações prontas para personalizar, sem começar do
-                        zero.
+                        Escolha o destino e comece com uma base pronta para
+                        personalizar.
                       </p>
                     </div>
                   </div>
+                  {targetBar}
                   {templates}
                   <div className="blank-template">
                     <PackCube variant="outline" size={34} />
                     <div>
                       <h3>Uma ideia diferente?</h3>
                       <p>
-                        Comece com uma base genérica e personalize cada detalhe.
+                        Comece com uma base genérica em{" "}
+                        <strong>
+                          {PLATFORM_ADAPTERS[defaultTarget].catalog.shortName}
+                        </strong>{" "}
+                        e personalize cada detalhe.
                       </p>
                     </div>
                     <button
                       className="button secondary"
-                      onClick={() => create()}
+                      onClick={() => create("generic", defaultTarget)}
                     >
                       Criar do meu jeito <ArrowRight size={16} />
                     </button>
@@ -1074,10 +1353,12 @@ export default function Studio() {
                   <div className="page-heading editor-page-heading">
                     <div>
                       <div className="eyebrow purple">
-                        CONSTRUTOR DE AGENTES{" "}
-                        <span className="mini-badge">Antigravity</span>
+                        CONSTRUTOR MULTIPLATAFORMA{" "}
+                        <span className="mini-badge">
+                          {PLATFORM_ADAPTERS[a.target].catalog.shortName}
+                        </span>
                       </div>
-                      <h1>{a.name || "Novo agente"}</h1>
+                      <h1>{a.common.name || "Novo agente"}</h1>
                       <p>Configure visualmente. Acompanhe cada arquivo.</p>
                     </div>
                     <div className="heading-actions">
@@ -1086,7 +1367,7 @@ export default function Studio() {
                         onClick={() =>
                           download(
                             serializeBackup([a]),
-                            `${a.slug || "agente"}.json`,
+                            `${a.common.slug || "agente"}.json`,
                             "application/json",
                           )
                         }
@@ -1104,7 +1385,7 @@ export default function Studio() {
                       </button>
                     </div>
                   </div>
-                  {(bridgeConnected || reviews[a.id]) && (
+                  {(bridgeConnected || reviews[a.common.id]) && (
                     <section
                       className={`review-bar ${effectiveReview(a)}`}
                       aria-label="Revisão e aprovação da ponte MCP"
@@ -1131,32 +1412,52 @@ export default function Studio() {
                             </strong>
                           )}
                         </div>
-                        {reviews[a.id]?.note && (
+                        {reviews[a.common.id]?.note && (
                           <p className="review-note">
-                            Nota da IA: {reviews[a.id].note}
+                            Nota da IA: {reviews[a.common.id].note}
                           </p>
                         )}
                         <p className="review-hint">
                           {!bridgeConnected
                             ? "Conecte a Ponte local ao vivo para dar o OK e liberar a exportação."
                             : effectiveReview(a) === "approved"
-                              ? "Você já pode pedir à IA no Antigravity para exportar, ou informar a pasta abaixo para gravar direto."
+                              ? "Você já pode pedir à IA para exportar via MCP, ou informar a pasta abaixo para gravar de forma não destrutiva."
                               : "Nada é gravado em nenhum projeto até você clicar em Dar OK."}
                         </p>
+                        {pendingOrphans && pendingOrphans.packId === a.common.id && (
+                          <div className="orphan-banner" role="status">
+                            <p>
+                              Arquivos órfãos antigos mantidos por segurança:{" "}
+                              <code>{pendingOrphans.orphans.join(", ")}</code>
+                            </p>
+                            <button
+                              type="button"
+                              className="inline-button"
+                              disabled={bridgeBusy}
+                              onClick={() =>
+                                exportCurrentAgentToProject({
+                                  cleanOrphans: true,
+                                })
+                              }
+                            >
+                              Remover órfãos rastreados
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="review-bar-actions">
                         <label className="field review-path-field">
                           Pasta do projeto de destino (opcional)
                           <input
                             value={
-                              targetProjects[a.id] ??
-                              reviews[a.id]?.targetProject ??
+                              targetProjects[a.common.id] ??
+                              reviews[a.common.id]?.targetProject ??
                               ""
                             }
                             onChange={(e) =>
                               setTargetProjects((prev) => ({
                                 ...prev,
-                                [a.id]: e.target.value,
+                                [a.common.id]: e.target.value,
                               }))
                             }
                             placeholder="/caminho/do/seu-projeto (ou deixe vazio para a IA escolher)"
@@ -1188,12 +1489,12 @@ export default function Studio() {
                                 bridgeBusy ||
                                 !bridgeConnected ||
                                 !(
-                                  targetProjects[a.id] ??
-                                  reviews[a.id]?.targetProject ??
+                                  targetProjects[a.common.id] ??
+                                  reviews[a.common.id]?.targetProject ??
                                   ""
                                 ).trim()
                               }
-                              onClick={exportCurrentAgentToProject}
+                              onClick={() => exportCurrentAgentToProject()}
                             >
                               <Upload size={16} />
                               Exportar direto para a pasta
@@ -1221,12 +1522,13 @@ export default function Studio() {
                     className={`editor-layout ${mobilePreview ? "show-preview" : "show-editor"}`}
                   >
                     <AgentEditor
-                      agent={a}
-                      update={update}
+                      pack={a}
+                      updatePack={updatePack}
                       step={step}
                       setStep={setStep}
                     />
                     <FilePreview
+                      target={a.target}
                       files={generated.files}
                       errors={generated.errors}
                       warnings={generated.warnings}
@@ -1235,10 +1537,11 @@ export default function Studio() {
                     />
                   </div>
                   <p className="compatibility-note">
-                    Mapeamento Antigravity · 12/11/2026. Agentes customizados:
-                    App e CLI. Recursos e permissões podem variar no IDE.{" "}
+                    Mapeamento {PLATFORM_ADAPTERS[a.target].catalog.shortName} ·{" "}
+                    {PLATFORM_ADAPTERS[a.target].mappingVersion} (verificado em{" "}
+                    {PLATFORM_ADAPTERS[a.target].catalog.docsVerifiedAt}).{" "}
                     <a
-                      href="https://antigravity.google/docs/subagents"
+                      href={PLATFORM_ADAPTERS[a.target].catalog.docsUrl}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -1257,11 +1560,14 @@ export default function Studio() {
                       <h1>Um jeito melhor de trabalhar.</h1>
                       <p>
                         Escolha estes itens na etapa “Regras e skills” de
-                        qualquer agente. Todos são universais para qualquer
-                        linguagem, framework ou gerenciador de pacotes.
+                        qualquer agente. Todos são adaptados ao destino ativo
+                        sem depender de linguagem ou framework.
                       </p>
                     </div>
-                    <button className="button primary" onClick={() => create()}>
+                    <button
+                      className="button primary"
+                      onClick={() => create("generic", defaultTarget)}
+                    >
                       Criar agente <Plus size={17} />
                     </button>
                   </div>
@@ -1308,8 +1614,8 @@ export default function Studio() {
                       <span className="eyebrow purple">
                         DA IDEIA AO PROJETO
                       </span>
-                      <h1>Agex. Do rascunho ao projeto.</h1>
-                      <p>Tudo o que você precisa para começar.</p>
+                      <h1>Agex. Multiplataforma com fidelidade real.</h1>
+                      <p>Cada destino usa seu próprio contrato oficial.</p>
                     </div>
                   </div>
                   <div className="help-grid">
@@ -1317,26 +1623,26 @@ export default function Studio() {
                       {
                         icon: "bot",
                         face: "agent",
-                        title: "Agentes",
-                        text: "Definem a identidade, o objetivo e as ferramentas de um especialista. Podem atuar como principal ou receber tarefas como subagentes.",
+                        title: "Google Antigravity",
+                        text: "Gera .agents/agents/*.md, .agents/rules/*.md, .agents/skills/*/SKILL.md e .agents/mcp_config.json exatamente como antes.",
                       },
                       {
                         icon: "file",
                         face: "rule",
-                        title: "Regras",
-                        text: "Orientações de comportamento do workspace. Podem estar sempre ativas, ser escolhidas pelo modelo, ativadas por arquivos ou mencionadas manualmente.",
+                        title: "Claude Code",
+                        text: "Gera .claude/agents/*.md (aliases sonnet/opus/haiku, permissionMode e tools reais), .claude/rules/ (com paths:), .claude/skills/ e .mcp.json.",
                       },
                       {
                         icon: "spark",
                         face: "skill",
-                        title: "Skills",
-                        text: "Procedimentos reutilizáveis. Cada skill tem uma descrição que indica quando utilizá-la e instruções que explicam o passo a passo.",
+                        title: "OpenAI Codex",
+                        text: "Gera AGENTS.md (via bloco gerenciado), .codex/agents/*.toml, .agents/skills/ e .codex/config.toml mesclado via parser TOML real.",
                       },
                       {
                         icon: "plug",
                         face: "mcp",
-                        title: "MCPs",
-                        text: "Conectam ferramentas e dados externos (banco, APIs, documentação) em qualquer linguagem via .agents/mcp_config.json. Para conectar o próprio Agex ao Antigravity, use a Ponte local.",
+                        title: "ChatGPT Plugin",
+                        text: "Gera plugin.json (agent-plugins.org 1.0.0), skills/*/SKILL.md e mcp.json (streamable-http para uso remoto na web).",
                       },
                     ].map((x) => (
                       <article className="help-card" key={x.title}>
@@ -1355,60 +1661,38 @@ export default function Studio() {
                     ))}
                   </div>
                   <article className="help-article">
-                    <h2>Do template ao seu projeto</h2>
+                    <h2>Mesclagem segura e proteção contra perda de dados</h2>
                     <ol>
-                      <li>Escolha um template e personalize a identidade.</li>
                       <li>
-                        Selecione modelo (Herdar, Gemini 4 Hydrogen/Argon,
-                        Gemini 3.8 Flash, Orchestrator Argon, Claude Opus/Sonnet
-                        5.5, Flash ou Pro), ferramentas, regras, skills e
-                        integrações MCP.
-                      </li>
-                      <li>Confira o conteúdo de cada arquivo na prévia.</li>
-                      <li>
-                        Exporte o ZIP (ou use a Ponte local ao vivo para aprovar
-                        e gravar direto no repositório) em qualquer linguagem ou
-                        stack, revisando arquivos existentes.
+                        Cada plataforma possui seu próprio catálogo e schema;
+                        modelos e ferramentas nunca são misturados.
                       </li>
                       <li>
-                        Abra o projeto no Antigravity, confira os agentes e
-                        recarregue os servidores MCP (<code>/mcp</code> ou
-                        Configurações). Se escolheu um modelo específico de
-                        sessão, siga <code>AGEX-SETUP.md</code> na sessão.
+                        Ao exportar direto via Ponte local,{" "}
+                        <code>.agex/manifest.json</code> registra hashes dos
+                        arquivos gerenciados para detectar conflitos antes de
+                        gravar.
+                      </li>
+                      <li>
+                        <code>AGENTS.md</code> e <code>CLAUDE.md</code> utilizam
+                        blocos delimitados{" "}
+                        <code>&lt;!-- AGEX:BEGIN --&gt;</code> ou pedem
+                        confirmação explícita.
+                      </li>
+                      <li>
+                        Arquivos de configuração JSON e TOML preservam chaves e
+                        servidores pré-existentes no projeto.
                       </li>
                     </ol>
-                    <h3>Universal para qualquer linguagem</h3>
-                    <p>
-                      Os agentes, regras e skills gerados funcionam em projetos
-                      de qualquer ecossistema (Python, Go, Rust, Java, PHP,
-                      C#, Ruby, JS/TS e outros). O agente identifica a stack e
-                      os comandos diretamente no repositório. Node.js 22+ é
-                      exigido apenas se você optar por executar a Ponte local.
-                    </p>
-                    <h3>Seus dados ficam com você</h3>
-                    <p>
-                      Os rascunhos são salvos somente neste navegador. Limpar os
-                      dados do site ou usar outro navegador não transfere seus
-                      agentes. Faça backups em JSON. A ponte local recebe
-                      alterações somente mediante sua conexão e aprovação explícitas.
-                    </p>
-                    <h3>Compatibilidade e limites</h3>
-                    <p>
-                      Agentes customizados são destinados ao App e CLI. Regras
-                      manuais não têm menções no CLI. Skills e MCPs podem
-                      depender da versão e do ambiente. A validação do Agex
-                      verifica os formatos documentados; a execução e as
-                      permissões são definidas pelo Antigravity.
-                    </p>
                     <div className="help-links">
-                      {["subagents", "rules", "skills", "mcp"].map((p) => (
+                      {Object.values(PLATFORM_ADAPTERS).map((ad) => (
                         <a
-                          key={p}
-                          href={`https://antigravity.google/docs/${p}/`}
+                          key={ad.id}
+                          href={ad.catalog.docsUrl}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          {p}
+                          {ad.catalog.shortName}
                           <ExternalLink size={13} />
                         </a>
                       ))}
@@ -1458,8 +1742,8 @@ export default function Studio() {
       {deleteId && (
         <Modal title="Excluir este agente?" onClose={() => setDeleteId(null)}>
           <p>
-            “{agents.find((a) => a.id === deleteId)?.name}” será removido deste
-            navegador. Exporte um backup se quiser guardá-lo.
+            “{agents.find((x) => x.common.id === deleteId)?.common.name}” será
+            removido deste navegador. Exporte um backup se quiser guardá-lo.
           </p>
           <div className="modal-actions">
             <button
@@ -1471,7 +1755,9 @@ export default function Studio() {
             <button
               className="button danger-button"
               onClick={() => {
-                setAgents((prev) => prev.filter((a) => a.id !== deleteId));
+                setAgents((prev) =>
+                  prev.filter((x) => x.common.id !== deleteId),
+                );
                 setDeleteId(null);
                 setToast("Agente excluído.");
               }}
@@ -1495,9 +1781,9 @@ export default function Studio() {
                     )
                   }
                 >
-                  {agents.map((a) => (
-                    <option value={a.id} key={a.id}>
-                      {a.name}
+                  {agents.map((ag) => (
+                    <option value={ag.common.id} key={ag.common.id}>
+                      {ag.common.name} ({PLATFORM_ADAPTERS[ag.target].catalog.shortName})
                     </option>
                   ))}
                 </select>
@@ -1506,9 +1792,91 @@ export default function Studio() {
           </div>
           <Comparison
             agents={compare
-              .map((id) => agents.find((a) => a.id === id)!)
+              .map((id) => agents.find((ag) => ag.common.id === id)!)
               .filter(Boolean)}
           />
+        </Modal>
+      )}
+      {ambiguousImport && (
+        <Modal
+          title="Confirmar plataforma da importação"
+          onClose={() => setAmbiguousImport(null)}
+        >
+          <p>
+            Os arquivos enviados são compatíveis com mais de uma plataforma.
+            Escolha como deseja interpretar este pacote:
+          </p>
+          <ul>
+            {ambiguousImport.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+          <div className="modal-actions">
+            {ambiguousImport.candidates.map((cand) => (
+              <button
+                key={cand}
+                type="button"
+                className="button primary"
+                onClick={() => resolveAmbiguousImport(cand)}
+              >
+                Importar como {PLATFORM_ADAPTERS[cand].catalog.shortName}
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {exportConflicts && (
+        <Modal
+          title="Conflitos detectados no projeto"
+          onClose={() => setExportConflicts(null)}
+        >
+          <p>
+            A exportação foi pausada para não sobrescrever arquivos existentes
+            em <code>{exportConflicts.projectPath}</code>:
+          </p>
+          <ul className="conflict-list">
+            {exportConflicts.conflicts.map((c) => (
+              <li key={c.path}>
+                <code>{c.path}</code>: {c.reason}
+              </li>
+            ))}
+          </ul>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setExportConflicts(null)}
+            >
+              Cancelar
+            </button>
+            {exportConflicts.conflicts.some((c) => c.canAppendManaged) &&
+              exportConflicts.conflicts.every((c) => c.canAppendManaged) && (
+                <button
+                  type="button"
+                  className="button signal"
+                  disabled={bridgeBusy}
+                  onClick={() =>
+                    exportCurrentAgentToProject({
+                      conflictResolution: "append-managed",
+                    })
+                  }
+                >
+                  Anexar bloco gerenciado
+                </button>
+              )}
+            <button
+              type="button"
+              className="button danger-button"
+              disabled={bridgeBusy}
+              onClick={() =>
+                exportCurrentAgentToProject({
+                  conflictResolution: "overwrite",
+                })
+              }
+            >
+              Sobrescrever arquivos em conflito
+            </button>
+          </div>
         </Modal>
       )}
       {!!importNotes.length && (
@@ -1526,54 +1894,71 @@ export default function Studio() {
     </div>
   );
 }
-function Comparison({ agents }: { agents: AgentConfig[] }) {
+
+function Comparison({ agents }: { agents: AgentPackV2[] }) {
   if (agents.length !== 2) return null;
-  const files = agents.map((a) => {
+  const files = agents.map((pack) => {
     try {
-      return generateFiles(a);
+      return generatePackFiles(pack);
     } catch {
       return [];
     }
   });
   const paths = [...new Set(files.flat().map((f) => f.path))];
+  const rows: { label: string; values: string[] }[] = [
+    {
+      label: "Plataforma",
+      values: agents.map(
+        (x) => PLATFORM_ADAPTERS[x.target].catalog.shortName,
+      ),
+    },
+    {
+      label: "Modelo",
+      values: agents.map((x) => summarizePackModel(x) ?? "Não aplicável"),
+    },
+    {
+      label: "Regras ativas",
+      values: agents.map((x) =>
+        String(x.common.rules.filter((r) => r.enabled).length),
+      ),
+    },
+    {
+      label: "Skills ativas",
+      values: agents.map((x) =>
+        String(x.common.skills.filter((s) => s.enabled).length),
+      ),
+    },
+    {
+      label: "MCP ativos",
+      values: agents.map((x) =>
+        String(x.common.mcpServers.filter((m) => m.enabled).length),
+      ),
+    },
+    {
+      label: "Etiquetas",
+      values: agents.map((x) => x.common.tags.join(", ") || "—"),
+    },
+  ];
   return (
     <div className="comparison">
       <table>
         <thead>
           <tr>
             <th>Propriedade</th>
-            {agents.map((a, i) => (
-              <th key={i}>{a.name}</th>
+            {agents.map((pack, i) => (
+              <th key={i}>{pack.common.name}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {(
-            [
-              "model",
-              "commandExecutionPolicy",
-              "mainAgent",
-              "subagent",
-              "tools",
-              "tags",
-            ] as const
-          ).map((key) => (
+          {rows.map((row) => (
             <tr
-              className={
-                JSON.stringify(agents[0][key]) !==
-                JSON.stringify(agents[1][key])
-                  ? "different"
-                  : ""
-              }
-              key={key}
+              className={row.values[0] !== row.values[1] ? "different" : ""}
+              key={row.label}
             >
-              <th>{key}</th>
-              {agents.map((a, i) => (
-                <td key={i}>
-                  {Array.isArray(a[key])
-                    ? (a[key] as string[]).join(", ")
-                    : String(a[key])}
-                </td>
+              <th>{row.label}</th>
+              {row.values.map((val, i) => (
+                <td key={i}>{val}</td>
               ))}
             </tr>
           ))}
@@ -1582,7 +1967,7 @@ function Comparison({ agents }: { agents: AgentConfig[] }) {
       <h3>Arquivos gerados</h3>
       {files.some((f) => !f.length) && (
         <p className="warning">
-          Um dos agentes possui campos inválidos; corrija-os para comparar todos
+          Um dos pacotes possui campos inválidos; corrija-os para comparar todos
           os arquivos.
         </p>
       )}

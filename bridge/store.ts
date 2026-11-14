@@ -1,24 +1,6 @@
-import {
-  readFile,
-  stat,
-  lstat,
-  realpath,
-  mkdir,
-  open,
-  rename,
-  unlink,
-} from "node:fs/promises";
-import { dirname, isAbsolute, resolve, sep } from "node:path";
-import { homedir } from "node:os";
-import { createHash, randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
-import {
-  parseBackup,
-  serializeBackup,
-  MAX_IMPORT_BYTES,
-} from "../src/storage/local";
-import { configSchema } from "../src/schemas/config";
-import { generateFiles } from "../src/generators/antigravity";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import {
   agentContentKey,
   reviewsFileSchema,
@@ -26,394 +8,504 @@ import {
   type ReviewMap,
   type ReviewRecord,
 } from "../src/features/bridge/review";
-import type { AgentConfig } from "../src/types";
+import { ensureAgentPackV2 } from "../src/platforms/common/convert";
+import { getPlatformAdapter } from "../src/platforms/registry";
+import {
+  MAX_IMPORT_BYTES,
+  parseBackup,
+  serializeBackup,
+} from "../src/storage/local";
+import type { AgentConfig, AgentPackV2 } from "../src/types";
+import {
+  exportPackSafely,
+  type ConflictResolution,
+  type ExportConflict,
+  type ExportFileResult,
+} from "./export";
 
-export function sha256Key(agent: AgentConfig): string {
-  return createHash("sha256").update(agentContentKey(agent)).digest("hex");
+export class ExportConflictError extends Error {
+  conflicts: ExportConflict[];
+  orphans: string[];
+
+  constructor(message: string, conflicts: ExportConflict[], orphans: string[]) {
+    super(message);
+    this.name = "ExportConflictError";
+    this.conflicts = conflicts;
+    this.orphans = orphans;
+  }
 }
 
-export function reviewsPath(path: string): string {
-  return `${path}.reviews.json`;
+export function sha256Key(
+  agent: AgentPackV2 | AgentConfig,
+  targetProject?: string,
+): string {
+  return createHash("sha256")
+    .update(agentContentKey(agent, targetProject), "utf8")
+    .digest("hex");
 }
 
-export async function withStoreLock<T>(
-  path: string,
+function sha256Raw(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+async function withStoreLock<T>(
+  file: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const parent = dirname(path);
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  const lockPath = `${path}.lock`;
+  const dir = dirname(file);
+  const lockDir = `${file}.lock`;
+  await mkdir(dir, { recursive: true });
   const deadline = Date.now() + 5000;
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  while (!handle) {
+  while (true) {
     try {
-      handle = await open(lockPath, "wx", 0o600);
+      await mkdir(lockDir);
+      break;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const info = await stat(lockPath).catch(() => null);
-      if (info && Date.now() - info.mtimeMs > 15000) {
-        await unlink(lockPath).catch(() => {});
+      if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
+      try {
+        const st = await stat(lockDir);
+        if (Date.now() - st.mtimeMs > 15000) {
+          await rm(lockDir, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
         continue;
       }
-      if (Date.now() >= deadline)
-        throw new Error("Aguardando acesso concorrente à biblioteca da ponte.");
-      await delay(25);
+      if (Date.now() > deadline) {
+        throw new Error(
+          "Tempo esgotado aguardando acesso exclusivo à biblioteca da ponte.",
+        );
+      }
+      await new Promise((r) => setTimeout(r, 25));
     }
   }
   try {
     return await fn();
   } finally {
-    await handle.close().catch(() => {});
-    await unlink(lockPath).catch(() => {});
+    await rm(lockDir, { recursive: true, force: true });
   }
 }
 
-export async function readStore(path: string) {
-  try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_IMPORT_BYTES)
-      throw new Error("Arquivo de biblioteca inválido ou maior que 1 MB.");
-    const raw = await readFile(path, "utf8");
-    return {
-      agents: parseBackup(raw).agents,
-      revision: createHash("sha256").update(raw).digest("hex"),
-    };
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT")
-      return { agents: [] as AgentConfig[], revision: "empty" };
-    throw e;
-  }
+function reviewsPathFor(file: string): string {
+  return `${file}.reviews.json`;
 }
 
-export async function readReviews(path: string): Promise<ReviewMap> {
-  const file = reviewsPath(path);
+async function readReviewsUnlocked(file: string): Promise<ReviewMap> {
   try {
-    const info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_IMPORT_BYTES)
-      throw new Error("Arquivo de revisões inválido ou maior que 1 MB.");
-    const raw = await readFile(file, "utf8");
+    const raw = await readFile(reviewsPathFor(file), "utf8");
     return reviewsFileSchema.parse(JSON.parse(raw));
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return {};
     throw e;
   }
 }
 
-async function atomicWriteText(path: string, content: string) {
-  const parent = dirname(path);
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  const info = await stat(parent);
-  if (!info.isDirectory()) throw new Error("Pasta da biblioteca inválida.");
-  const temporary = `${path}.${randomUUID()}.tmp`;
+async function writeReviewsUnlocked(
+  file: string,
+  reviews: ReviewMap,
+): Promise<void> {
+  const path = reviewsPathFor(file);
+  const parsed = reviewsFileSchema.parse(reviews);
+  await mkdir(dirname(path), { recursive: true });
+  const temp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(temp, JSON.stringify(parsed, null, 2), "utf8");
+  const { rename } = await import("node:fs/promises");
+  await rename(temp, path);
+}
+
+async function readStoreUnlocked(
+  file: string,
+): Promise<{ agents: AgentPackV2[]; raw: string }> {
   try {
-    const file = await open(temporary, "wx", 0o600);
-    try {
-      await file.writeFile(content, "utf8");
-      await file.sync();
-    } finally {
-      await file.close();
+    const raw = await readFile(file, "utf8");
+    const parsed = parseBackup(raw);
+    return { agents: parsed.agents, raw };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return { agents: [], raw: "" };
     }
-    await rename(temporary, path);
-  } finally {
-    await unlink(temporary).catch(() => {});
+    throw e;
   }
 }
 
-export async function writeStore(path: string, agents: AgentConfig[]) {
-  await atomicWriteText(path, serializeBackup(agents));
+async function writeStoreUnlocked(
+  file: string,
+  agents: (AgentPackV2 | AgentConfig)[],
+): Promise<string> {
+  const content = serializeBackup(agents);
+  if (new TextEncoder().encode(content).byteLength > MAX_IMPORT_BYTES) {
+    throw new Error("A biblioteca excede o limite de 1 MB.");
+  }
+  await mkdir(dirname(file), { recursive: true });
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(temp, content, "utf8");
+  const { rename } = await import("node:fs/promises");
+  await rename(temp, file);
+  return content;
 }
 
-export async function writeReviews(path: string, reviews: ReviewMap) {
-  await atomicWriteText(
-    reviewsPath(path),
-    JSON.stringify(reviewsFileSchema.parse(reviews), null, 2) + "\n",
+function computeCombinedRevision(
+  agentsRaw: string,
+  reviews: ReviewMap,
+): string {
+  if (!agentsRaw && Object.keys(reviews).length === 0) return "empty";
+  const canonicalReviews = JSON.stringify(
+    Object.fromEntries(
+      Object.entries(reviews).sort(([a], [b]) => a.localeCompare(b)),
+    ),
   );
+  return sha256Raw(`${agentsRaw}\n::\n${canonicalReviews}`);
 }
 
-export function resolveClientReview(
-  agent: AgentConfig,
-  review: ReviewRecord | undefined,
-): ClientReviewInfo | undefined {
-  if (!review) return undefined;
-  const stale =
-    review.status === "approved" && review.approvedHash !== sha256Key(agent);
+export async function readStore(file: string): Promise<{
+  agents: AgentPackV2[];
+  revision: string;
+}> {
+  const { agents, raw } = await readStoreUnlocked(file);
   return {
-    ...review,
-    stale,
-    effectiveStatus: stale ? "stale" : review.status,
+    agents,
+    revision: raw ? sha256Raw(raw) : "empty",
   };
 }
 
-export async function readLibraryState(path: string) {
-  const [store, reviews] = await Promise.all([
-    readStore(path),
-    readReviews(path),
-  ]);
-  const clientReviews: Record<string, ClientReviewInfo> = {};
-  for (const agent of store.agents) {
-    const resolved = resolveClientReview(agent, reviews[agent.id]);
-    if (resolved) clientReviews[agent.id] = resolved;
+export async function writeStore(
+  file: string,
+  agents: (AgentPackV2 | AgentConfig)[],
+): Promise<string> {
+  return withStoreLock(file, async () => {
+    const raw = await writeStoreUnlocked(file, agents);
+    return sha256Raw(raw);
+  });
+}
+
+export function enrichReviews(
+  agents: AgentPackV2[],
+  reviews: ReviewMap,
+): Record<string, ClientReviewInfo> {
+  const out: Record<string, ClientReviewInfo> = {};
+  for (const agent of agents) {
+    const rec = reviews[agent.common.id];
+    if (!rec) continue;
+    let currentHash = "";
+    try {
+      const boundProject = rec.targetProject?.trim() || undefined;
+      currentHash = sha256Key(agent, boundProject);
+    } catch {
+      currentHash = "invalid";
+    }
+    const stale =
+      rec.status === "approved" &&
+      Boolean(rec.approvedHash) &&
+      rec.approvedHash !== currentHash;
+    out[agent.common.id] = {
+      ...rec,
+      stale,
+      effectiveStatus: stale ? "stale" : rec.status,
+    };
   }
-  const combinedRevision = createHash("sha256")
-    .update(store.revision)
-    .update("\n")
-    .update(JSON.stringify(clientReviews))
-    .digest("hex");
+  return out;
+}
+
+export async function readLibraryState(file: string): Promise<{
+  agents: AgentPackV2[];
+  reviews: Record<string, ClientReviewInfo>;
+  revision: string;
+}> {
+  const [{ agents, raw }, reviews] = await Promise.all([
+    readStoreUnlocked(file),
+    readReviewsUnlocked(file),
+  ]);
   return {
-    agents: store.agents,
-    reviews: clientReviews,
-    rawReviews: reviews,
-    storeRevision: store.revision,
-    revision: combinedRevision,
+    agents,
+    reviews: enrichReviews(agents, reviews),
+    revision: computeCombinedRevision(raw, reviews),
   };
 }
 
-export function planMerge(existing: AgentConfig[], incoming: AgentConfig[]) {
-  const byId = new Map(existing.map((a) => [a.id, a]));
+export function planMerge(
+  existing: (AgentPackV2 | AgentConfig)[],
+  incoming: (AgentPackV2 | AgentConfig)[],
+) {
+  const existingV2 = existing.map(ensureAgentPackV2);
+  const incomingV2 = incoming.map(ensureAgentPackV2);
+
+  const byId = new Map(existingV2.map((a) => [a.common.id, a]));
+  const incomingIds = new Set(incomingV2.map((a) => a.common.id));
   const added: string[] = [];
   const changed: string[] = [];
   let unchanged = 0;
-  for (const a of incoming) {
-    const previous = byId.get(a.id);
-    if (!previous) added.push(a.name);
-    else if (JSON.stringify(previous) !== JSON.stringify(a))
-      changed.push(a.name);
-    else unchanged++;
-    byId.set(a.id, a);
+
+  for (const agent of incomingV2) {
+    const current = byId.get(agent.common.id);
+    if (!current) added.push(agent.common.name || agent.common.slug);
+    else if (JSON.stringify(current) !== JSON.stringify(agent)) {
+      changed.push(agent.common.name || agent.common.slug);
+    } else unchanged++;
   }
-  if (byId.size > 100)
-    throw new Error("A biblioteca resultante excederia 100 agentes.");
-  const agents = [...byId.values()];
-  const content = serializeBackup(agents);
-  if (Buffer.byteLength(content) > MAX_IMPORT_BYTES)
-    throw new Error("A biblioteca resultante excederia 1 MB.");
-  return { agents, added, changed, unchanged };
+
+  return {
+    agents: [
+      ...incomingV2,
+      ...existingV2.filter((a) => !incomingIds.has(a.common.id)),
+    ].slice(0, 100),
+    added,
+    changed,
+    unchanged,
+  };
 }
 
-export async function upsertPackFromAi(
-  path: string,
-  agentInput: AgentConfig,
-  { note, targetProject }: { note?: string; targetProject?: string } = {},
-) {
-  const agent = configSchema.parse(agentInput);
-  return withStoreLock(path, async () => {
-    const state = await readLibraryState(path);
-    const merged = planMerge(state.agents, [agent]);
-    const now = new Date().toISOString();
-    const nextReviews: ReviewMap = {
-      ...state.rawReviews,
-      [agent.id]: {
-        status: "pending_review",
-        source: "ai",
-        ...(note?.trim() ? { note: note.trim().slice(0, 1000) } : {}),
-        ...(targetProject?.trim()
-          ? { targetProject: targetProject.trim().slice(0, 4096) }
-          : {}),
-        updatedAt: now,
-      },
-    };
-    await writeStore(path, merged.agents);
-    await writeReviews(path, nextReviews);
-    const updated = await readLibraryState(path);
+export async function syncFromUi(
+  file: string,
+  incoming: (AgentPackV2 | AgentConfig)[],
+  expectedRevision?: string,
+): Promise<{ conflict: boolean; revision: string }> {
+  return withStoreLock(file, async () => {
+    const [{ agents, raw }, reviews] = await Promise.all([
+      readStoreUnlocked(file),
+      readReviewsUnlocked(file),
+    ]);
+    const currentRevision = computeCombinedRevision(raw, reviews);
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      return { conflict: true, revision: currentRevision };
+    }
+    const nextAgents = planMerge(agents, incoming).agents;
+    const nextRaw = await writeStoreUnlocked(file, nextAgents);
     return {
-      agent,
-      created: merged.added.length > 0,
-      revision: updated.revision,
-      review: updated.reviews[agent.id],
+      conflict: false,
+      revision: computeCombinedRevision(nextRaw, reviews),
+    };
+  });
+}
+
+export async function upsertPackFromAi(options: {
+  file: string;
+  pack: AgentPackV2;
+  note?: string;
+}): Promise<{
+  pack: AgentPackV2;
+  review: ClientReviewInfo;
+  revision: string;
+}> {
+  const { file, pack, note } = options;
+  const adapter = getPlatformAdapter(pack.target);
+  const check = adapter.validate(pack);
+  if (!check.valid) {
+    throw new Error(check.errors[0] ?? "Pacote inválido.");
+  }
+
+  return withStoreLock(file, async () => {
+    const [{ agents }, reviews] = await Promise.all([
+      readStoreUnlocked(file),
+      readReviewsUnlocked(file),
+    ]);
+    const nextAgents = [
+      pack,
+      ...agents.filter((a) => a.common.id !== pack.common.id),
+    ].slice(0, 100);
+    const now = new Date().toISOString();
+    const record: ReviewRecord = {
+      status: "pending_review",
+      source: "ai",
+      ...(note ? { note } : {}),
+      ...(reviews[pack.common.id]?.targetProject
+        ? { targetProject: reviews[pack.common.id].targetProject }
+        : {}),
+      updatedAt: now,
+    };
+    const nextReviews: ReviewMap = { ...reviews, [pack.common.id]: record };
+    const nextRaw = await writeStoreUnlocked(file, nextAgents);
+    await writeReviewsUnlocked(file, nextReviews);
+    const enriched = enrichReviews(nextAgents, nextReviews);
+    return {
+      pack,
+      review: enriched[pack.common.id],
+      revision: computeCombinedRevision(nextRaw, nextReviews),
     };
   });
 }
 
 export async function approvePackFromUi(
-  path: string,
-  agentInput: AgentConfig,
-  {
-    targetProject,
-    expectedRevision,
-  }: { targetProject?: string; expectedRevision?: string } = {},
+  file: string,
+  agent: AgentPackV2 | AgentConfig,
+  options: { targetProject?: string; expectedRevision?: string } = {},
 ): Promise<
-  | {
-      conflict: true;
-      revision: string;
-    }
-  | {
-      conflict: false;
-      revision: string;
-      review: ClientReviewInfo;
-      agent: AgentConfig;
-    }
+  | { conflict: true; currentRevision: string }
+  | { conflict: false; revision: string; review: ClientReviewInfo }
 > {
-  const agent = configSchema.parse(agentInput);
-  return withStoreLock(path, async () => {
-    const state = await readLibraryState(path);
-    if (expectedRevision && expectedRevision !== state.revision)
-      return { conflict: true, revision: state.revision };
-    const merged = planMerge(state.agents, [agent]);
-    const prev = state.rawReviews[agent.id];
+  const pack = ensureAgentPackV2(agent);
+  const adapter = getPlatformAdapter(pack.target);
+  const check = adapter.validate(pack);
+  if (!check.valid) {
+    throw new Error(check.errors[0] ?? "Agente inválido para aprovação.");
+  }
+
+  return withStoreLock(file, async () => {
+    const [{ agents, raw }, reviews] = await Promise.all([
+      readStoreUnlocked(file),
+      readReviewsUnlocked(file),
+    ]);
+    const currentRevision = computeCombinedRevision(raw, reviews);
+    if (
+      options.expectedRevision &&
+      options.expectedRevision !== currentRevision
+    ) {
+      return { conflict: true, currentRevision };
+    }
+
+    const existing = agents.find((a) => a.common.id === pack.common.id);
     const now = new Date().toISOString();
-    const cleanedTarget = targetProject?.trim()
-      ? targetProject.trim().slice(0, 4096)
-      : undefined;
-    const nextReviews: ReviewMap = {
-      ...state.rawReviews,
-      [agent.id]: {
-        status: "approved",
-        source: prev?.source ?? "studio",
-        ...(prev?.note ? { note: prev.note } : {}),
-        ...(cleanedTarget ? { targetProject: cleanedTarget } : {}),
-        approvedHash: sha256Key(agent),
+    const savedPack: AgentPackV2 = {
+      ...pack,
+      common: {
+        ...pack.common,
         updatedAt: now,
-        approvedAt: now,
       },
     };
-    await writeStore(path, merged.agents);
-    await writeReviews(path, nextReviews);
-    const updated = await readLibraryState(path);
+    const nextAgents = [
+      savedPack,
+      ...agents.filter((a) => a.common.id !== savedPack.common.id),
+    ].slice(0, 100);
+
+    const prevReview = reviews[savedPack.common.id];
+    const trimmedProject = options.targetProject?.trim()
+      ? resolve(options.targetProject.trim())
+      : prevReview?.targetProject;
+    const record: ReviewRecord = {
+      status: "approved",
+      source: prevReview?.source ?? (existing ? "studio" : "ai"),
+      ...(prevReview?.note ? { note: prevReview.note } : {}),
+      ...(trimmedProject ? { targetProject: trimmedProject } : {}),
+      approvedHash: sha256Key(savedPack, trimmedProject),
+      updatedAt: now,
+      approvedAt: now,
+    };
+    const nextReviews: ReviewMap = {
+      ...reviews,
+      [savedPack.common.id]: record,
+    };
+    const nextRaw = await writeStoreUnlocked(file, nextAgents);
+    await writeReviewsUnlocked(file, nextReviews);
+    const enriched = enrichReviews(nextAgents, nextReviews);
     return {
       conflict: false,
-      revision: updated.revision,
-      review: updated.reviews[agent.id]!,
-      agent,
+      revision: computeCombinedRevision(nextRaw, nextReviews),
+      review: enriched[savedPack.common.id],
     };
   });
 }
 
-async function assertNoSymlinkChain(root: string, relativePath: string) {
-  const parts = relativePath.split("/").filter(Boolean);
-  let cursor = root;
-  for (const part of parts) {
-    cursor = resolve(cursor, part);
-    if (cursor !== root && !cursor.startsWith(root + sep))
-      throw new Error(`Caminho fora do projeto de destino: ${relativePath}`);
-    const info = await lstat(cursor).catch(() => null);
-    if (info?.isSymbolicLink())
-      throw new Error(`Link simbólico não permitido em: ${relativePath}`);
-  }
-}
-
 export async function exportApprovedPack(
-  path: string,
-  id: string,
-  requestedProjectPath?: string,
-) {
-  return withStoreLock(path, async () => {
-    const state = await readLibraryState(path);
-    const agent = state.agents.find((a) => a.id === id);
-    if (!agent) throw new Error("Conjunto não encontrado na biblioteca.");
-    const review = state.reviews[id];
-    if (!review || review.effectiveStatus !== "approved") {
-      const reason =
-        review?.effectiveStatus === "stale"
-          ? "O agente foi modificado após a aprovação anterior."
-          : "Este agente ainda aguarda sua revisão e aprovação (OK) no site Agex.";
-      throw new Error(
-        `${reason} Abra o Agex conectado à ponte, confira o conjunto "${agent.name}" (${agent.slug}) e clique em "Dar OK (aprovar para exportar)".`,
-      );
-    }
-    const targetInput =
-      requestedProjectPath?.trim() || review.targetProject?.trim() || "";
-    if (!targetInput)
-      throw new Error(
-        "Informe o caminho absoluto da pasta do projeto de destino (projectPath).",
-      );
-    if (!isAbsolute(targetInput))
-      throw new Error(
-        "O caminho do projeto de destino precisa ser absoluto.",
-      );
-    const targetInfo = await stat(targetInput).catch(() => null);
-    if (!targetInfo || !targetInfo.isDirectory())
-      throw new Error(
-        "A pasta do projeto de destino precisa existir e ser um diretório real.",
-      );
-    const realProject = await realpath(targetInput);
-    const realHome = await realpath(homedir()).catch(() => homedir());
-    if (dirname(realProject) === realProject || realProject === realHome)
-      throw new Error(
-        "Escolha uma pasta específica do projeto, não a raiz do sistema ou o diretório home.",
-      );
-    if (review.targetProject?.trim()) {
-      const approvedTargetReal = await realpath(review.targetProject).catch(
-        () => resolve(review.targetProject!),
-      );
-      if (
-        requestedProjectPath?.trim() &&
-        approvedTargetReal !== realProject
-      ) {
-        throw new Error(
-          `Este conjunto foi aprovado para a pasta ${review.targetProject}, diferente de ${requestedProjectPath}. Aprove novamente no site para o novo destino.`,
-        );
-      }
+  file: string,
+  options: {
+    id: string;
+    projectPath?: string;
+    conflictResolution?: ConflictResolution;
+    cleanOrphans?: boolean;
+    orphanPaths?: string[];
+  },
+): Promise<{
+  id: string;
+  name: string;
+  slug: string;
+  target: AgentPackV2["target"];
+  mappingVersion: string;
+  projectPath: string;
+  files: ExportFileResult[];
+  skipped: string[];
+  conflicts: ExportConflict[];
+  orphans: string[];
+  removedOrphans: string[];
+}> {
+  const {
+    id,
+    projectPath,
+    conflictResolution = "abort",
+    cleanOrphans = false,
+    orphanPaths,
+  } = options;
+
+  return withStoreLock(file, async () => {
+    const [{ agents }, reviews] = await Promise.all([
+      readStoreUnlocked(file),
+      readReviewsUnlocked(file),
+    ]);
+    const pack = agents.find((a) => a.common.id === id);
+    if (!pack) {
+      throw new Error(`Conjunto "${id}" não encontrado na biblioteca local.`);
     }
 
-    const generated = generateFiles(agent);
-    const results: Array<{
-      path: string;
-      action: "created" | "updated" | "merged" | "unchanged";
-    }> = [];
+    const adapter = getPlatformAdapter(pack.target);
+    const validation = adapter.validate(pack);
+    if (!validation.valid) {
+      throw new Error(validation.errors[0] ?? "Conjunto inválido para exportação.");
+    }
 
-    for (const file of generated) {
-      if (file.path.includes("..") || isAbsolute(file.path))
-        throw new Error(`Caminho inválido gerado: ${file.path}`);
-      await assertNoSymlinkChain(realProject, file.path);
-      const dest = resolve(realProject, file.path);
-      if (!dest.startsWith(realProject + sep))
-        throw new Error(`Caminho fora do projeto: ${file.path}`);
+    const review = reviews[id];
+    if (!review || review.status !== "approved") {
+      throw new Error(
+        `O conjunto "${pack.common.name}" ainda está aguardando seu OK no site Agex. Revise-o na aba "Ponte local" / Editor, clique em "Dar OK (aprovar para exportar)" e tente novamente.`,
+      );
+    }
 
-      let content = file.content;
-      let action: "created" | "updated" | "merged" | "unchanged" = "created";
-      const existingRaw = await readFile(dest, "utf8").catch((e) => {
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-        throw e;
-      });
+    const destRaw = projectPath?.trim() || review.targetProject?.trim() || "";
+    if (!destRaw) {
+      throw new Error(
+        "Informe o caminho absoluto da pasta do projeto de destino (ou salve-o ao dar o OK no site).",
+      );
+    }
+    const projectDir = resolve(destRaw);
 
-      if (file.path === ".agents/mcp_config.json" && existingRaw !== null) {
-        let existingJson: unknown;
-        try {
-          existingJson = JSON.parse(existingRaw);
-        } catch {
-          throw new Error(
-            ".agents/mcp_config.json existente não é um JSON válido; corrija antes de exportar.",
-          );
-        }
-        if (
-          !existingJson ||
-          typeof existingJson !== "object" ||
-          Array.isArray(existingJson)
-        )
-          throw new Error(".agents/mcp_config.json existente tem formato inválido.");
-        const existingObj = existingJson as Record<string, unknown>;
-        const existingServers =
-          existingObj.mcpServers &&
-          typeof existingObj.mcpServers === "object" &&
-          !Array.isArray(existingObj.mcpServers)
-            ? (existingObj.mcpServers as Record<string, unknown>)
-            : {};
-        const incomingObj = JSON.parse(file.content) as {
-          mcpServers: Record<string, unknown>;
-        };
-        const mergedConfig = {
-          ...existingObj,
-          mcpServers: {
-            ...existingServers,
-            ...incomingObj.mcpServers,
-          },
-        };
-        content = JSON.stringify(mergedConfig, null, 2) + "\n";
-        action = existingRaw === content ? "unchanged" : "merged";
-      } else if (existingRaw !== null) {
-        action = existingRaw === content ? "unchanged" : "updated";
-      }
+    const boundProject = review.targetProject
+      ? resolve(review.targetProject)
+      : undefined;
+    if (boundProject && boundProject !== projectDir) {
+      throw new Error(
+        `A aprovação de "${pack.common.name}" foi registrada para "${boundProject}". Clique em "Dar OK" novamente para exportar para "${projectDir}".`,
+      );
+    }
 
-      if (action !== "unchanged") await atomicWriteText(dest, content);
-      results.push({ path: file.path, action });
+    const currentHash = sha256Key(pack, boundProject);
+    if (!review.approvedHash || review.approvedHash !== currentHash) {
+      throw new Error(
+        `O conjunto "${pack.common.name}" foi alterado após o último OK (ou mudou de plataforma/versão). Revise no site Agex e clique em "Dar OK" novamente antes de exportar.`,
+      );
+    }
+
+    const generated = adapter.generate(pack);
+    const safeResult = await exportPackSafely({
+      projectDir,
+      pack,
+      mappingVersion: adapter.mappingVersion,
+      files: generated,
+      mergePolicy: (rel) => adapter.mergePolicy(rel),
+      conflictResolution,
+      cleanOrphans,
+      orphanPaths,
+    });
+
+    if (safeResult.conflicts.length > 0) {
+      const list = safeResult.conflicts
+        .map((c) => `${c.path}: ${c.reason}`)
+        .join("; ");
+      throw new ExportConflictError(
+        `Exportação pausada para proteger arquivos existentes: ${list}`,
+        safeResult.conflicts,
+        safeResult.orphans,
+      );
     }
 
     return {
-      id: agent.id,
-      name: agent.name,
-      slug: agent.slug,
-      projectPath: realProject,
-      files: results,
+      id: pack.common.id,
+      name: pack.common.name,
+      slug: pack.common.slug,
+      target: pack.target,
+      mappingVersion: adapter.mappingVersion,
+      projectPath: projectDir,
+      files: safeResult.files,
+      skipped: safeResult.skipped,
+      conflicts: [],
+      orphans: safeResult.orphans,
+      removedOrphans: safeResult.removedOrphans,
     };
   });
 }

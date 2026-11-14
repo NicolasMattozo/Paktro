@@ -17,6 +17,7 @@ import {
   saveLibrary,
   MAX_IMPORT_BYTES,
 } from "../src/storage/local";
+import { migrateV1ToV2 } from "../src/platforms/common/convert";
 const metadata = (content: string) =>
   parse(content.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)![1]);
 describe("gerador Antigravity", () => {
@@ -164,7 +165,7 @@ describe("gerador Antigravity", () => {
       expect(await zip.file(f.path)!.async("string")).toBe(f.content);
     expect(
       parseBackup(await zip.file("agex.json")!.async("string")).agents,
-    ).toEqual([a]);
+    ).toEqual([migrateV1ToV2(a)]);
   });
 });
 describe("biblioteca local", () => {
@@ -172,7 +173,7 @@ describe("biblioteca local", () => {
     const a = createAgent();
     a.name = "";
     a.description = "";
-    expect(parseBackup(serializeBackup([a])).agents).toEqual([a]);
+    expect(parseBackup(serializeBackup([a])).agents).toEqual([migrateV1ToV2(a)]);
   });
   it("recusa tamanho, versão, propriedades e tipos não suportados", () => {
     expect(() => parseBackup("x".repeat(MAX_IMPORT_BYTES + 1))).toThrow();
@@ -219,7 +220,9 @@ describe("catálogo ampliado de ferramentas", () => {
     a.tools = [...TOOL_NAMES];
     const files = generateFiles(a);
     expect(metadata(files[0].content).tools).toEqual([...TOOL_NAMES].sort());
-    expect(parseBackup(serializeBackup([a])).agents[0].tools).toEqual(
+    expect(
+      parseBackup(serializeBackup([a])).agents[0].targets.antigravity?.tools,
+    ).toEqual(
       TOOL_NAMES,
     );
   });
@@ -272,7 +275,7 @@ describe("modelos de sessão (Gemini, Orchestrator e Claude), universalidade e p
       );
       expect(
         parseBackup(await zip.file("agex.json")!.async("string"))
-          .agents[0].model,
+          .agents[0].targets.antigravity?.model,
       ).toBe(model);
     }
 
@@ -354,6 +357,6 @@ describe("modelos de sessão (Gemini, Orchestrator e Claude), universalidade e p
     });
     expect(read.error).toBeUndefined();
     expect(read.agents).toHaveLength(1);
-    expect(read.agents[0].id).toBe(a.id);
+    expect(read.agents[0].common.id).toBe(a.id);
   });
 });

@@ -9,15 +9,19 @@ import {
   Code2,
   Files,
 } from "lucide-react";
-import type { GeneratedFile } from "@/types";
+import type { GeneratedFile, TargetPlatform } from "@/types";
 import { download } from "@/features/export";
+import { PLATFORM_ADAPTERS } from "@/platforms/registry";
+
 type Props = {
+  target: TargetPlatform;
   files: GeneratedFile[];
   errors: string[];
   warnings: string[];
   onZip: () => void;
   notify: (text: string) => void;
 };
+
 function Code({ content }: { content: string }) {
   let frontmatter = false;
   return (
@@ -28,9 +32,9 @@ function Code({ content }: { content: string }) {
           const cls =
             line === "---"
               ? "syntax-divider"
-              : line.startsWith("#")
+              : line.startsWith("#") || line.startsWith("[")
                 ? "syntax-heading"
-                : frontmatter && line.includes(":")
+                : frontmatter && (line.includes(":") || line.includes("="))
                   ? "syntax-property"
                   : line.startsWith("  -")
                     ? "syntax-value"
@@ -48,7 +52,9 @@ function Code({ content }: { content: string }) {
     </pre>
   );
 }
+
 export default function FilePreview({
+  target,
   files,
   errors,
   warnings,
@@ -58,6 +64,8 @@ export default function FilePreview({
   const [path, setPath] = useState("");
   const [tab, setTab] = useState<"files" | "code">("files");
   const file = files.find((f) => f.path === path) ?? files[0];
+  const adapter = PLATFORM_ADAPTERS[target];
+
   async function copy() {
     try {
       if (!file) return;
@@ -67,6 +75,7 @@ export default function FilePreview({
       notify("Não foi possível copiar. Use o download do arquivo.");
     }
   }
+
   return (
     <aside className="preview-card" aria-label="Pré-visualização">
       <div className="preview-heading">
@@ -169,9 +178,11 @@ export default function FilePreview({
                         download(
                           file.content,
                           file.path.split("/").pop()!,
-                          file.kind === "mcp" || file.kind === "backup"
+                          file.path.endsWith(".json")
                             ? "application/json"
-                            : "text/markdown;charset=utf-8",
+                            : file.path.endsWith(".toml")
+                              ? "application/toml;charset=utf-8"
+                              : "text/markdown;charset=utf-8",
                         )
                       }
                     >
@@ -189,7 +200,7 @@ export default function FilePreview({
         {errors.length === 0 && (
           <div className="valid-message">
             <Check size={15} />
-            Estrutura validada • Antigravity
+            Estrutura validada • {adapter.catalog.shortName}
           </div>
         )}
         {warnings.map((w, i) => (
@@ -205,14 +216,14 @@ export default function FilePreview({
           <Download size={18} />
           Exportar ZIP
         </button>
-        <p>Arquivos do agente + backup editável em JSON</p>
+        <p>Arquivos do pacote + backup editável em JSON (v2)</p>
       </div>
       <div className="install-tip">
         <span>01</span>
         <p>
-          Extraia o ZIP na raiz do seu projeto.
+          Extraia o ZIP na raiz do seu projeto ou use a Ponte local.
           <br />
-          Revise os arquivos antes de substituir configurações existentes.
+          Consulte <code>AGEX-SETUP.md</code> ao mesclar com arquivos existentes.
         </p>
       </div>
     </aside>
