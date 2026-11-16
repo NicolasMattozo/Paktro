@@ -140,7 +140,7 @@ export default function McpHelp() {
           <a
             href="https://antigravity.google/docs/mcp/"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
           >
             Documentação oficial de conexão MCP ↗
           </a>

@@ -613,13 +613,13 @@ export default function AgentEditor({
                 )}
                 <div className="tool-sources">
                   <span>Catálogo verificado em 12/11/2026.</span>
-                  <a href={TOOL_SOURCES.standard} target="_blank" rel="noreferrer">
+                  <a href={TOOL_SOURCES.standard} target="_blank" rel="noopener noreferrer">
                     Ferramentas oficiais <ExternalLink size={11} />
                   </a>
-                  <a href={TOOL_SOURCES.mcp} target="_blank" rel="noreferrer">
+                  <a href={TOOL_SOURCES.mcp} target="_blank" rel="noopener noreferrer">
                     MCP <ExternalLink size={11} />
                   </a>
-                  <a href={TOOL_SOURCES.agents} target="_blank" rel="noreferrer">
+                  <a href={TOOL_SOURCES.agents} target="_blank" rel="noopener noreferrer">
                     Permissões do agente <ExternalLink size={11} />
                   </a>
                 </div>

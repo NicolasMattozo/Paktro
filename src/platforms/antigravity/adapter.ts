@@ -13,7 +13,7 @@ import {
   defaultAntigravityTarget,
   packToLegacyAntigravity,
 } from "../common/convert";
-import { assertSafeRelativePath } from "../common/paths";
+import { assertSafeRelativePath, SLUG_REGEX, slugify } from "../common/paths";
 import { MAPPING_VERSIONS, type MergePolicy, type PlatformAdapter } from "../types";
 import { parseFrontmatterMarkdown } from "../common/frontmatter";
 import { parseSkillMarkdown } from "../common/skills";
@@ -130,7 +130,8 @@ export const antigravityAdapter: PlatformAdapter = {
 
     const rulesById = new Map<string, CommonRule>();
     for (const rf of files.filter((f) => /^\.agents\/rules\/[^/]+\.md$/.test(f.path))) {
-      const id = rf.path.replace(/^\.agents\/rules\/|\.md$/g, "");
+      const rawId = rf.path.replace(/^\.agents\/rules\/|\.md$/g, "");
+      const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
       const { metadata, body } = parseFrontmatterMarkdown(rf.content);
       const trigger = (["always_on", "model_decision", "glob", "manual"].includes(
         String(metadata.trigger),
@@ -173,10 +174,20 @@ export const antigravityAdapter: PlatformAdapter = {
       const parsed = JSON.parse(mcpFile.content) as {
         mcpServers?: Record<string, Record<string, unknown>>;
       };
-      for (const [id, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+      for (const [rawId, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+        if (
+          rawId === "__proto__" ||
+          rawId === "constructor" ||
+          rawId === "prototype" ||
+          !cfg ||
+          typeof cfg !== "object"
+        ) {
+          continue;
+        }
+        const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
         if (cfg.env || cfg.headers) {
           warnings.push(
-            `Credenciais/cabeçalhos em "${id}" (.agents/mcp_config.json) foram ignorados por segurança.`,
+            `Credenciais/cabeçalhos em "${rawId}" (.agents/mcp_config.json) foram ignorados por segurança.`,
           );
         }
         if (typeof cfg.command === "string") {
@@ -227,10 +238,11 @@ export const antigravityAdapter: PlatformAdapter = {
         agentSkills.push(sk);
       }
 
-      const slug =
-        typeof metadata.name === "string"
-          ? metadata.name
+      const rawSlug =
+        typeof metadata.name === "string" && metadata.name.trim()
+          ? metadata.name.trim()
           : af.path.split("/").pop()!.replace(/\.md$/, "");
+      const slug = SLUG_REGEX.test(rawSlug) ? rawSlug : slugify(rawSlug);
       const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
       const spec = body.match(/##\s+Especialidade\s*\n+([\s\S]*?)(?=^##\s+|$)/m)?.[1]?.trim() ?? "";
       const goal = body.match(/##\s+Objetivo\s*\n+([\s\S]*?)(?=^##\s+|$)/m)?.[1]?.trim() ?? "";

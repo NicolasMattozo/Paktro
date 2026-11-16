@@ -55,6 +55,16 @@ export async function assertNoSymlinkChain(
   if (absTarget !== absRoot && !absTarget.startsWith(absRoot + sep)) {
     throw new Error(`Caminho fora da pasta do projeto: ${relPath}`);
   }
+  try {
+    const rootStat = await lstat(absRoot);
+    if (rootStat.isSymbolicLink()) {
+      throw new Error("A pasta do projeto não pode ser um link simbólico.");
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw e;
+    }
+  }
   const segments = relPath.split("/");
   let current = absRoot;
   for (const seg of segments) {
@@ -124,7 +134,10 @@ function managedBlockMarkers(packId: string) {
 
 function wrapManagedBlock(packId: string, body: string): string {
   const { begin, end } = managedBlockMarkers(packId);
-  return `${begin}\n${body.trimEnd()}\n${end}\n`;
+  const safeBody = body
+    .replace(/<!--\s*AGEX:(BEGIN|END)/gi, "<!-- agex-escaped:$1")
+    .trimEnd();
+  return `${begin}\n${safeBody}\n${end}\n`;
 }
 
 function mergeManagedMarkdown(
@@ -164,6 +177,18 @@ function mergeManagedMarkdown(
   };
 }
 
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function sanitizeRecord(obj: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!DANGEROUS_KEYS.has(k)) {
+      clean[k] = v;
+    }
+  }
+  return clean;
+}
+
 function mergeJsonMcp(existingText: string, incomingText: string): {
   content?: string;
   reason?: string;
@@ -182,17 +207,17 @@ function mergeJsonMcp(existingText: string, incomingText: string): {
     existingObj.mcpServers &&
     typeof existingObj.mcpServers === "object" &&
     !Array.isArray(existingObj.mcpServers)
-      ? (existingObj.mcpServers as Record<string, unknown>)
+      ? sanitizeRecord(existingObj.mcpServers as Record<string, unknown>)
       : {};
   const incomingServers =
     incomingObj.mcpServers &&
     typeof incomingObj.mcpServers === "object" &&
     !Array.isArray(incomingObj.mcpServers)
-      ? (incomingObj.mcpServers as Record<string, unknown>)
+      ? sanitizeRecord(incomingObj.mcpServers as Record<string, unknown>)
       : {};
 
   const merged = {
-    ...existingObj,
+    ...sanitizeRecord(existingObj),
     mcpServers: {
       ...existingServers,
       ...incomingServers,
@@ -218,17 +243,17 @@ function mergeTomlConfig(existingText: string, incomingText: string): {
     existingObj.mcp_servers &&
     typeof existingObj.mcp_servers === "object" &&
     !Array.isArray(existingObj.mcp_servers)
-      ? (existingObj.mcp_servers as Record<string, unknown>)
+      ? sanitizeRecord(existingObj.mcp_servers as Record<string, unknown>)
       : {};
   const incomingServers =
     incomingObj.mcp_servers &&
     typeof incomingObj.mcp_servers === "object" &&
     !Array.isArray(incomingObj.mcp_servers)
-      ? (incomingObj.mcp_servers as Record<string, unknown>)
+      ? sanitizeRecord(incomingObj.mcp_servers as Record<string, unknown>)
       : {};
 
   const merged: Record<string, unknown> = {
-    ...existingObj,
+    ...sanitizeRecord(existingObj),
     mcp_servers: {
       ...existingServers,
       ...incomingServers,

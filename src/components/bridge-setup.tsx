@@ -325,7 +325,7 @@ export default function BridgeSetup({
         <a
           href="https://antigravity.google/docs/mcp/"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
         >
           Ver a documentação oficial de MCP ↗
         </a>

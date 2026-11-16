@@ -25,13 +25,23 @@ export function assertSafeRelativePath(relPath: string): string {
   if (
     relPath.startsWith("/") ||
     relPath.includes("\\") ||
-    relPath.includes("\0") ||
+    /[\x00-\x1f\x7f]/.test(relPath) ||
     /^[a-zA-Z]:/.test(relPath)
   ) {
     throw new Error(`Caminho inseguro bloqueado: ${relPath}`);
   }
   const parts = relPath.split("/");
-  if (parts.some((p) => !p || p === "." || p === ".." || p === ".git")) {
+  if (
+    parts.some(
+      (p) =>
+        !p ||
+        p === "." ||
+        p === ".." ||
+        p === ".git" ||
+        p === ".env" ||
+        p.startsWith(".env."),
+    )
+  ) {
     throw new Error(`Caminho inseguro bloqueado: ${relPath}`);
   }
   return relPath;

@@ -253,6 +253,15 @@ export const chatGptPluginAdapter: PlatformAdapter = {
         mcpServers?: Record<string, Record<string, unknown>>;
       };
       for (const [id, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+        if (
+          id === "__proto__" ||
+          id === "constructor" ||
+          id === "prototype" ||
+          !cfg ||
+          typeof cfg !== "object"
+        ) {
+          continue;
+        }
         if (cfg.env || cfg.headers) {
           warnings.push(
             `Credenciais/cabeçalhos em "${id}" (mcp.json) foram ignorados por segurança.`,

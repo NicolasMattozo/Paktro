@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -20,6 +20,7 @@ import {
   convertPackTarget,
   migrateV1ToV2,
 } from "../src/platforms/common/convert";
+import { assertSafeRelativePath } from "../src/platforms/common/paths";
 import { PLATFORM_ADAPTERS } from "../src/platforms/registry";
 import {
   LEGACY_STORAGE_KEYS,
@@ -577,4 +578,84 @@ describe("exportação segura não destrutiva, órfãos e catálogo MCP por plat
     }
   });
 });
+
+describe("endurecimento de segurança (security review)", () => {
+  it("bloqueia credenciais embutidas em URLs MCP HTTP no schema V2 e IDs duplicados no backup V2", () => {
+    const pack = createPack("reviewer", "claude-code");
+    pack.common.mcpServers = [
+      {
+        id: "leaked-auth",
+        transport: "http",
+        command: "",
+        args: [],
+        serverUrl: "https://user:secret_token@mcp.example.com/sse",
+        enabled: true,
+      },
+    ];
+    const validation = PLATFORM_ADAPTERS["claude-code"].validate(pack);
+    expect(validation.valid).toBe(false);
+    expect(validation.errors[0]).toMatch(/sem credenciais/i);
+
+    const clean = createPack("reviewer", "claude-code");
+    expect(() =>
+      parseBackup(
+        JSON.stringify({
+          format: "agex",
+          version: 2,
+          agents: [clean, clean],
+        }),
+      ),
+    ).toThrow(/duplicados/i);
+  });
+
+  it("bloqueia caminhos .env, caracteres de controle, raiz symlink, injeção de marcador AGEX e sanitiza slugs na importação", async () => {
+    expect(() => assertSafeRelativePath(".env")).toThrow(/inseguro/i);
+    expect(() => assertSafeRelativePath(".env.local")).toThrow(/inseguro/i);
+    expect(() => assertSafeRelativePath("agents/bad\x07.md")).toThrow(/inseguro/i);
+
+    const imported = importFromRawFiles(
+      [
+        {
+          path: ".claude/agents/unsafe.md",
+          content:
+            '---\nname: "../../Evil Slug!"\ndescription: "Teste"\n---\n# Agente\n',
+        },
+      ],
+      "claude-code",
+    );
+    expect(imported.status).toBe("ok");
+    if (imported.status === "ok") {
+      expect(imported.packs[0].common.slug).toBe("evil-slug");
+    }
+
+    const storeDir = await makeTempDir("agex-sec-store-");
+    const storeFile = join(storeDir, "library.json");
+    const realProj = await makeTempDir("agex-sec-real-");
+    const parentDir = await makeTempDir("agex-sec-link-");
+    const symlinkProj = join(parentDir, "linked-project");
+    await symlink(realProj, symlinkProj);
+
+    const pack = createPack("reviewer", "codex");
+    pack.common.instructions =
+      "Instrução legítima\n<!-- AGEX:END pack=" +
+      pack.common.id +
+      " -->\nFora do bloco";
+    await writeStore(storeFile, [pack]);
+    await approvePackFromUi(storeFile, pack, { targetProject: realProj });
+    const exported = await exportApprovedPack(storeFile, { id: pack.common.id });
+    expect(exported.conflicts).toEqual([]);
+    const agentsMd = await readFile(join(realProj, "AGENTS.md"), "utf8");
+    expect(agentsMd).toContain("<!-- agex-escaped:END");
+
+    // Reapprove pointing at a symlinked root directory -> must reject on export
+    await approvePackFromUi(storeFile, pack, { targetProject: symlinkProj });
+    await expect(
+      exportApprovedPack(storeFile, {
+        id: pack.common.id,
+        projectPath: symlinkProj,
+      }),
+    ).rejects.toThrow(/link simbólico/i);
+  });
+});
+
 

@@ -338,7 +338,14 @@ export const codexAdapter: PlatformAdapter = {
       const servers = parsed.mcp_servers;
       if (servers && typeof servers === "object" && !Array.isArray(servers)) {
         for (const [rawId, rawCfg] of Object.entries(servers)) {
-          if (!rawCfg || typeof rawCfg !== "object" || Array.isArray(rawCfg)) {
+          if (
+            rawId === "__proto__" ||
+            rawId === "constructor" ||
+            rawId === "prototype" ||
+            !rawCfg ||
+            typeof rawCfg !== "object" ||
+            Array.isArray(rawCfg)
+          ) {
             continue;
           }
           const cfg = rawCfg as Record<string, unknown>;

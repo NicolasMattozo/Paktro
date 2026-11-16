@@ -3,6 +3,7 @@ import {
   parseFrontmatterMarkdown,
   renderFrontmatterMarkdown,
 } from "./frontmatter";
+import { SLUG_REGEX, slugify } from "./paths";
 
 export function renderSkillMarkdown(
   skill: CommonSkill,
@@ -23,10 +24,11 @@ export function parseSkillMarkdown(
   content: string,
 ): { skill: CommonSkill; disableModelInvocation?: boolean } {
   const { metadata, body } = parseFrontmatterMarkdown(content);
-  const id =
+  const rawId =
     typeof metadata.name === "string" && metadata.name.trim()
       ? metadata.name.trim()
       : skillIdFallback;
+  const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
   const description =
     typeof metadata.description === "string"
       ? metadata.description

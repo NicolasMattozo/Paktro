@@ -1598,7 +1598,7 @@ export default function Studio() {
                     <a
                       href={PLATFORM_ADAPTERS[a.target].catalog.docsUrl}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                     >
                       Ver documentação <ExternalLink size={12} />
                     </a>
@@ -1745,7 +1745,7 @@ export default function Studio() {
                           key={ad.id}
                           href={ad.catalog.docsUrl}
                           target="_blank"
-                          rel="noreferrer"
+                          rel="noopener noreferrer"
                         >
                           {ad.catalog.shortName}
                           <ExternalLink size={13} />

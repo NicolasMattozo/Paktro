@@ -19,7 +19,7 @@ import {
   renderFrontmatterMarkdown,
 } from "../common/frontmatter";
 import { isInsecureHttpRemoteUrl } from "../common/mcp";
-import { assertSafeRelativePath } from "../common/paths";
+import { assertSafeRelativePath, SLUG_REGEX, slugify } from "../common/paths";
 import { parseSkillMarkdown, renderSkillMarkdown } from "../common/skills";
 import { MAPPING_VERSIONS, type MergePolicy, type PlatformAdapter } from "../types";
 
@@ -485,7 +485,8 @@ export const claudeCodeAdapter: PlatformAdapter = {
     const warnings: string[] = [];
     const rules: CommonRule[] = [];
     for (const rf of ruleFiles) {
-      const id = rf.path.replace(/^\.claude\/rules\/|\.md$/g, "");
+      const rawId = rf.path.replace(/^\.claude\/rules\/|\.md$/g, "");
+      const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
       if (rf.content.startsWith("---\n")) {
         const { metadata, body } = parseFrontmatterMarkdown(rf.content);
         const patterns = Array.isArray(metadata.paths)
@@ -537,10 +538,20 @@ export const claudeCodeAdapter: PlatformAdapter = {
       const parsed = JSON.parse(mcpFile.content) as {
         mcpServers?: Record<string, Record<string, unknown>>;
       };
-      for (const [id, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+      for (const [rawId, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+        if (
+          rawId === "__proto__" ||
+          rawId === "constructor" ||
+          rawId === "prototype" ||
+          !cfg ||
+          typeof cfg !== "object"
+        ) {
+          continue;
+        }
+        const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
         if (cfg.env || cfg.headers) {
           warnings.push(
-            `Credenciais/cabeçalhos em "${id}" (.mcp.json) foram ignorados por segurança.`,
+            `Credenciais/cabeçalhos em "${rawId}" (.mcp.json) foram ignorados por segurança.`,
           );
         }
         if (cfg.type === "http" && typeof cfg.url === "string") {
@@ -680,10 +691,11 @@ export const claudeCodeAdapter: PlatformAdapter = {
 
       const tools = parseToolField(metadata.tools);
       const disallowedTools = parseToolField(metadata.disallowedTools);
-      const slug =
-        typeof metadata.name === "string"
-          ? metadata.name
+      const rawSlug =
+        typeof metadata.name === "string" && metadata.name.trim()
+          ? metadata.name.trim()
           : af.path.split("/").pop()!.replace(/\.md$/, "");
+      const slug = SLUG_REGEX.test(rawSlug) ? rawSlug : slugify(rawSlug);
       const sections = parseAgentBodySections(body);
       const rawModel = typeof metadata.model === "string" ? metadata.model : "inherit";
       const model = (validModelsSet.has(rawModel) ? rawModel : "inherit") as ClaudeCodeTargetConfig["model"];

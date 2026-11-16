@@ -120,7 +120,7 @@ export const commonMcpSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["serverUrl"],
-        message: `Informe uma URL HTTP/HTTPS válida para o servidor MCP "${mcp.id}".`,
+        message: `Informe uma URL HTTP/HTTPS válida e sem credenciais para o servidor MCP "${mcp.id}".`,
       });
     }
   });
@@ -385,7 +385,15 @@ export const backupV2Schema = z
     version: z.literal(2),
     agents: z.array(packDraftSchema).max(100),
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    if (new Set(v.agents.map((a) => a.common.id)).size !== v.agents.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "IDs duplicados no backup.",
+      });
+    }
+  });
 
 export function validatePackSchema(pack: AgentPackV2): {
   valid: boolean;

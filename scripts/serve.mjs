@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { resolve, sep, extname } from "node:path";
 const root = resolve("out");
 const portFlag = process.argv.indexOf("--port");
@@ -12,6 +12,8 @@ const types = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
 };
@@ -23,11 +25,27 @@ const server = createServer(async (req, res) => {
       res.writeHead(403).end();
       return;
     }
-    if ((await stat(file)).isDirectory()) file = resolve(file, "index.html");
+    let st = await lstat(file);
+    if (st.isSymbolicLink()) {
+      res.writeHead(403).end();
+      return;
+    }
+    if (st.isDirectory()) {
+      file = resolve(file, "index.html");
+      st = await lstat(file);
+      if (st.isSymbolicLink()) {
+        res.writeHead(403).end();
+        return;
+      }
+    }
     const data = await readFile(file);
     res.writeHead(200, {
       "Content-Type": types[extname(file)] ?? "application/octet-stream",
       "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     });
     res.end(data);
   } catch {

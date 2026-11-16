@@ -54,7 +54,7 @@ async function withStoreLock<T>(
 ): Promise<T> {
   const dir = dirname(file);
   const lockDir = `${file}.lock`;
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const deadline = Date.now() + 5000;
   while (true) {
     try {
@@ -106,9 +106,12 @@ async function writeReviewsUnlocked(
 ): Promise<void> {
   const path = reviewsPathFor(file);
   const parsed = reviewsFileSchema.parse(reviews);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(temp, JSON.stringify(parsed, null, 2), "utf8");
+  await writeFile(temp, JSON.stringify(parsed, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   const { rename } = await import("node:fs/promises");
   await rename(temp, path);
 }
@@ -136,9 +139,9 @@ async function writeStoreUnlocked(
   if (new TextEncoder().encode(content).byteLength > MAX_IMPORT_BYTES) {
     throw new Error("A biblioteca excede o limite de 1 MB.");
   }
-  await mkdir(dirname(file), { recursive: true });
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(temp, content, "utf8");
+  await writeFile(temp, content, { encoding: "utf8", mode: 0o600 });
   const { rename } = await import("node:fs/promises");
   await rename(temp, file);
   return content;

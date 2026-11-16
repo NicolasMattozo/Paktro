@@ -7,6 +7,7 @@ export function activeMcpServers(servers: CommonMcpServer[]): CommonMcpServer[] 
 export function isValidHttpUrl(raw: string): boolean {
   try {
     const u = new URL(raw);
+    if (u.username || u.password) return false;
     return u.protocol === "https:" || u.protocol === "http:";
   } catch {
     return false;
