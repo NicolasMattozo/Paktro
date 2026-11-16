@@ -14,11 +14,12 @@ import {
   Laptop,
   Layers,
   LayoutGrid,
+  LayoutTemplate,
   Menu,
+  Plug,
   Plus,
   Search,
   ShieldCheck,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -194,6 +195,42 @@ export default function Studio() {
   bridgeRevisionRef.current = bridgeRevision;
   const fileInput = useRef<HTMLInputElement>(null);
   const externalInput = useRef<HTMLInputElement>(null);
+  const mainShellRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const sidebarCloseRef = useRef<HTMLButtonElement>(null);
+  const [isDrawerViewport, setIsDrawerViewport] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 760px)");
+    const sync = () => setIsDrawerViewport(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const shell = mainShellRef.current;
+    if (shell) {
+      shell.inert = menu && isDrawerViewport;
+    }
+    if (!menu || !isDrawerViewport) return;
+
+    const raf = requestAnimationFrame(() => {
+      sidebarCloseRef.current?.focus({ preventScroll: true });
+    });
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenu(false);
+        requestAnimationFrame(() => menuTriggerRef.current?.focus());
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKeyDown);
+      if (shell) shell.inert = false;
+    };
+  }, [menu, isDrawerViewport]);
 
   useEffect(() => {
     try {
@@ -275,6 +312,26 @@ export default function Studio() {
       warnings: validation.warnings,
     };
   }, [a]);
+
+  function runLibraryTransition(update: () => void) {
+    const canTransition =
+      typeof document !== "undefined" &&
+      "startViewTransition" in document &&
+      agents.length <= 40 &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (canTransition) {
+      document.startViewTransition(update);
+    } else {
+      update();
+    }
+  }
+
+  function closeMobileDrawer() {
+    setMenu(false);
+    if (isDrawerViewport) {
+      requestAnimationFrame(() => menuTriggerRef.current?.focus());
+    }
+  }
 
   function navigate(v: View) {
     setView(v);
@@ -678,24 +735,29 @@ export default function Studio() {
   ).length;
 
   const targetBar = (
-    <div className="target-switcher" role="group" aria-label="Destino dos novos templates">
-      <span className="target-switcher-label">Destino dos novos templates:</span>
+    <div
+      className="target-switcher"
+      role="group"
+      aria-label="Destino dos novos templates"
+    >
+      <span className="target-switcher-label">Destino:</span>
       <div className="target-switcher-pills">
         {(
           [
-            { id: "antigravity", label: "Google Antigravity" },
+            { id: "antigravity", label: "Antigravity" },
             { id: "claude-code", label: "Claude Code" },
-            { id: "codex", label: "OpenAI · Codex" },
-            { id: "chatgpt-plugin", label: "OpenAI · ChatGPT Plugin" },
+            { id: "codex", label: "Codex" },
+            { id: "chatgpt-plugin", label: "ChatGPT Plugin" },
           ] as const
         ).map((t) => (
           <button
             key={t.id}
             type="button"
-            className={`target-pill ${defaultTarget === t.id ? "active" : ""}`}
+            className={`target-pill ${t.id} ${defaultTarget === t.id ? "active" : ""}`}
             aria-pressed={defaultTarget === t.id}
             onClick={() => setDefaultTarget(t.id)}
           >
+            <span className={`target-dot ${t.id}`} aria-hidden="true" />
             {t.label}
           </button>
         ))}
@@ -711,21 +773,13 @@ export default function Studio() {
           className="template-card"
           onClick={() => create(t.id, defaultTarget)}
         >
-          <span className="template-card-top">
-            <span className={`template-icon ${t.color}`}>
-              <Icon name={t.icon} size={19} />
-            </span>
-            <PackCube
-              size={22}
-              hasRules={t.rules.length > 0}
-              hasSkills={t.skills.length > 0}
-              eyes={t.id !== "generic"}
-            />
+          <span className={`template-icon ${t.color}`} aria-hidden="true">
+            <Icon name={t.icon} size={17} />
           </span>
           <h3>{t.name}</h3>
           <p>{t.description}</p>
           <span className="template-link">
-            Usar template <ArrowRight size={14} />
+            Usar template <ArrowRight size={14} strokeWidth={1.65} />
           </span>
         </button>
       ))}
@@ -737,53 +791,74 @@ export default function Studio() {
       <a className="skip-link" href="#main">
         Pular para o conteúdo
       </a>
-      <aside className={`sidebar ${menu ? "open" : ""}`}>
-        <button
-          className="brand"
-          onClick={() => navigate("library")}
-          aria-label="Agex, início"
-        >
-          <span className="brand-mark">
-            <AgexMark size={40} />
-          </span>
-          <span>
-            <span className="brand-wordmark">
-              ag<span className="brand-light">ex</span>
+      <aside
+        id="studio-sidebar"
+        className={`sidebar ${menu ? "open" : ""}`}
+        {...(isDrawerViewport && menu
+          ? { role: "dialog", "aria-modal": true, "aria-label": "Navegação" }
+          : {})}
+      >
+        <div className="sidebar-head">
+          <button
+            className="brand"
+            onClick={() => navigate("library")}
+            aria-label="Agex, início"
+          >
+            <span className="brand-mark">
+              <AgexMark size={28} />
             </span>
-            <small>MULTIPLATAFORMA · MCP</small>
-          </span>
-        </button>
-        <div className="workspace-label">
-          WORKSPACE LOCAL <span>v2.0</span>
+            <span className="brand-copy">
+              <span className="brand-wordmark">
+                ag<span className="brand-accent">ex</span>
+              </span>
+              <span className="brand-sub">MCP · packs</span>
+            </span>
+          </button>
+          <button
+            ref={sidebarCloseRef}
+            type="button"
+            hidden={!isDrawerViewport || !menu}
+            className="icon-button sidebar-close"
+            aria-label="Fechar menu"
+            onClick={closeMobileDrawer}
+          >
+            <X size={16} strokeWidth={1.65} />
+          </button>
         </div>
-        <nav className="main-nav" aria-label="Menu principal">
+        <nav className="main-nav" aria-label="Principal">
           <button
             className={["library", "editor"].includes(view) ? "active" : ""}
+            aria-current={
+              ["library", "editor"].includes(view) ? "page" : undefined
+            }
             onClick={() => navigate("library")}
           >
-            <LayoutGrid size={18} />
+            <LayoutGrid size={16} strokeWidth={1.65} />
             Meus agentes<span className="nav-count">{agents.length}</span>
           </button>
           <button
             className={view === "templates" ? "active" : ""}
+            aria-current={view === "templates" ? "page" : undefined}
             onClick={() => navigate("templates")}
           >
-            <Sparkles size={18} />
+            <LayoutTemplate size={16} strokeWidth={1.65} />
             Templates<span className="new-tag">{TEMPLATES.length}</span>
           </button>
           <button
             className={view === "catalog" ? "active" : ""}
+            aria-current={view === "catalog" ? "page" : undefined}
             onClick={() => navigate("catalog")}
           >
-            <Layers size={18} />
+            <Layers size={16} strokeWidth={1.65} />
             Regras e skills
           </button>
           <div className="nav-divider" />
           <button
             className={view === "bridge" ? "active" : ""}
+            aria-current={view === "bridge" ? "page" : undefined}
             onClick={() => navigate("bridge")}
           >
-            <Icon name="plug" size={18} />
+            <Plug size={16} strokeWidth={1.65} />
             Ponte local
             {pendingReviewCount > 0 && (
               <span className="nav-count">{pendingReviewCount}</span>
@@ -791,43 +866,33 @@ export default function Studio() {
           </button>
           <button
             className={view === "help" ? "active" : ""}
+            aria-current={view === "help" ? "page" : undefined}
             onClick={() => navigate("help")}
           >
-            <CircleHelp size={18} />
+            <CircleHelp size={16} strokeWidth={1.65} />
             Como funciona
           </button>
         </nav>
         <div className="sidebar-bottom">
-          <div className="privacy-card">
-            <span className="privacy-icon">
-              <ShieldCheck size={20} />
-            </span>
-            <strong>Seu espaço. Seus dados.</strong>
-            <p>Suas configurações ficam no navegador, sob seu controle.</p>
-            <span>
-              <span className="status-dot" />
-              Sem conta. Sem nuvem.
-            </span>
-          </div>
-          <div className="sidebar-footer">
-            <span>Feito para construir.</span>
-            <span className="version">v2.0 · MCP</span>
-          </div>
+          <span className="version">v2.0 · local</span>
         </div>
       </aside>
       {menu && (
-        <button
+        <div
           className="menu-backdrop"
-          aria-label="Fechar menu"
-          onClick={() => setMenu(false)}
+          aria-hidden="true"
+          onClick={closeMobileDrawer}
         />
       )}
-      <div className="main-shell">
+      <div className="main-shell" ref={mainShellRef}>
         <header className="topbar">
           <div>
             <button
+              ref={menuTriggerRef}
               className="icon-button mobile-menu"
               aria-label="Abrir menu"
+              aria-expanded={menu}
+              aria-controls="studio-sidebar"
               onClick={() => setMenu(!menu)}
             >
               <Menu size={21} />
@@ -946,66 +1011,43 @@ export default function Studio() {
                 <>
                   <div className="page-heading">
                     <div>
-                      <span className="eyebrow purple">
-                        DO SEU JEITO, DO INÍCIO AO ARQUIVO
-                      </span>
-                      <h1>
-                        Seus agentes. <span>Suas possibilidades.</span>
-                      </h1>
+                      <span className="eyebrow indigo">WORKSPACE LOCAL</span>
+                      <h1>Seus agentes</h1>
                       <p>
-                        Monte pacotes fieis ao formato oficial para Antigravity,
-                        Claude Code, Codex e ChatGPT.
+                        Monte e exporte configurações para Antigravity, Claude
+                        Code, Codex e ChatGPT em um só lugar.
                       </p>
                     </div>
                     <button
                       className="button primary"
                       onClick={() => create("generic", defaultTarget)}
                     >
-                      <Plus size={18} />
+                      <Plus size={17} strokeWidth={1.75} />
                       Criar agente
                     </button>
                   </div>
                   <section className="welcome-banner">
-                    <div>
-                      <span className="pill">
-                        <span className="status-dot" />
-                        AGEX · MULTIPLATAFORMA
+                    <div className="welcome-copy">
+                      <span className="hero-tag">
+                        Antigravity · Claude · Codex · ChatGPT
                       </span>
                       <h2>
-                        Menos configuração.
+                        Configure uma vez.
                         <br />
-                        <span>Mais criação.</span>
+                        <span>Exporte no formato certo.</span>
                       </h2>
                       <p>
-                        Escolha o destino, encaixe regras, skills e MCPs{" "}
-                        <br className="desktop-break" />e exporte arquivos fieis
-                        para o seu projeto.
+                        Combine instruções, regras, skills e servidores MCP com
+                        validação por plataforma antes de salvar no projeto.
                       </p>
                       <button
                         className="button signal"
                         onClick={() => navigate("templates")}
                       >
-                        Explorar templates <ArrowRight size={17} />
+                        Explorar templates <ArrowRight size={16} />
                       </button>
                     </div>
                     <div className="agent-illustration" aria-hidden="true">
-                      <div className="orbit orbit-one" />
-                      <div className="orbit orbit-two" />
-                      <div className="float-chip chip-code">
-                        <span className="face-dot mcp" />
-                        MCP · Ferramentas
-                        <Check size={12} />
-                      </div>
-                      <div className="float-chip chip-skill">
-                        <span className="face-dot skill" />
-                        Skills
-                        <Check size={12} />
-                      </div>
-                      <div className="float-chip chip-rule">
-                        <span className="face-dot rule" />
-                        Regras
-                        <Check size={12} />
-                      </div>
                       <div className="hero-cube-stage">
                         <picture>
                           <source
@@ -1015,18 +1057,21 @@ export default function Studio() {
                           <img
                             src="/hero-cube.webp"
                             alt=""
-                            width={158}
-                            height={190}
+                            width={168}
+                            height={202}
                             decoding="async"
                           />
                         </picture>
                       </div>
                     </div>
                   </section>
-                  <div className="section-title">
+                  <div className="section-title templates-header">
                     <div>
-                      <h2>Um bom começo faz a diferença</h2>
-                      <p>Templates pensados para o seu fluxo de trabalho.</p>
+                      <h2>Modelos iniciais</h2>
+                      <p>
+                        Escolha o destino e comece com ferramentas, regras e
+                        skills pré-montadas.
+                      </p>
                     </div>
                     <button
                       className="text-button"
@@ -1080,20 +1125,22 @@ export default function Studio() {
                     </div>
                     <div className="library-toolbar">
                       <div className="search-input">
-                        <Search size={17} />
+                        <Search size={16} strokeWidth={1.65} />
                         <input
                           aria-label="Buscar agentes"
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
-                          placeholder="Buscar por nome, descrição, destino ou etiqueta…"
+                          placeholder="Buscar por nome, descrição ou etiqueta…"
                         />
                       </div>
                       <select
                         aria-label="Filtrar por plataforma"
                         value={platformFilter}
                         onChange={(e) =>
-                          setPlatformFilter(
-                            e.target.value as TargetPlatform | "all",
+                          runLibraryTransition(() =>
+                            setPlatformFilter(
+                              e.target.value as TargetPlatform | "all",
+                            ),
                           )
                         }
                       >
@@ -1108,38 +1155,48 @@ export default function Studio() {
                       <select
                         aria-label="Ordenar agentes"
                         value={sort}
-                        onChange={(e) => setSort(e.target.value)}
+                        onChange={(e) =>
+                          runLibraryTransition(() => setSort(e.target.value))
+                        }
                       >
                         <option value="recent">Editados recentemente</option>
                         <option value="name">Nome: A → Z</option>
                       </select>
                     </div>
+                    <p role="status" className="sr-only">
+                      {agents.length > 0
+                        ? `${filtered.length} de ${agents.length} agente(s) listado(s).`
+                        : ""}
+                    </p>
                     {!filtered.length ? (
                       <div className="empty-state">
-                        <span>
-                          <PackCube variant="outline" size={32} />
+                        <span className="empty-state-icon" aria-hidden="true">
+                          <Layers size={20} strokeWidth={1.65} />
                         </span>
                         <h3>
                           {agents.length
                             ? "Nenhum agente encontrado"
-                            : "Seu primeiro agente está a uma ideia de distância"}
+                            : "Nenhum agente criado ainda"}
                         </h3>
                         <p>
                           {agents.length
-                            ? "Tente outro nome, destino ou etiqueta."
-                            : "Comece com um template ou crie uma configuração do seu jeito."}
+                            ? "Tente outro termo ou altere o filtro de plataforma."
+                            : "Escolha um modelo acima ou crie um agente em branco."}
                         </p>
                         <button
-                          className="text-button"
+                          className="button secondary"
                           onClick={() =>
                             agents.length
-                              ? (setQuery(""), setPlatformFilter("all"))
+                              ? runLibraryTransition(() => {
+                                  setQuery("");
+                                  setPlatformFilter("all");
+                                })
                               : create()
                           }
                         >
                           {agents.length
                             ? "Limpar busca"
-                            : "+ Criar meu primeiro agente"}
+                            : "Criar agente em branco"}
                         </button>
                       </div>
                     ) : (
@@ -1161,26 +1218,17 @@ export default function Studio() {
                           return (
                             <article className="agent-card" key={c.id}>
                               <div className="agent-card-top">
-                                <div className="agent-card-identity">
-                                  <span className="pack-avatar">
-                                    <PackCube
-                                      size={30}
-                                      hasRules={activeRules > 0}
-                                      hasSkills={activeSkills > 0}
-                                    />
-                                  </span>
-                                  <span className="agent-card-slug">
-                                    {packMainPath(pack)}
-                                  </span>
-                                </div>
-                                <div>
+                                <span className="agent-card-slug">
+                                  {packMainPath(pack)}
+                                </span>
+                                <div className="card-actions">
                                   <button
                                     className="icon-button"
                                     aria-label={`Duplicar ${c.name}`}
                                     title="Duplicar"
                                     onClick={() => duplicate(pack)}
                                   >
-                                    <Copy size={16} />
+                                    <Copy size={15} strokeWidth={1.65} />
                                   </button>
                                   <button
                                     className="icon-button danger"
@@ -1188,7 +1236,7 @@ export default function Studio() {
                                     title="Excluir"
                                     onClick={() => setDeleteId(c.id)}
                                   >
-                                    <Trash2 size={16} />
+                                    <Trash2 size={15} strokeWidth={1.65} />
                                   </button>
                                 </div>
                               </div>
@@ -1270,9 +1318,6 @@ export default function Studio() {
                                     {activeMcp} MCP
                                   </span>
                                 )}
-                                {c.tags.filter(Boolean).map((t, i) => (
-                                  <span key={i}>{t}</span>
-                                ))}
                               </div>
                               <div className="agent-card-bottom">
                                 <span>
@@ -1285,10 +1330,11 @@ export default function Studio() {
                                   }).format(new Date(c.updatedAt))}
                                 </span>
                                 <button
+                                  className="card-arrow-btn"
                                   onClick={() => open(pack)}
                                   aria-label={`Editar ${c.name}`}
                                 >
-                                  <ArrowRight size={17} />
+                                  <ArrowRight size={15} strokeWidth={1.65} />
                                 </button>
                               </div>
                             </article>
@@ -1301,17 +1347,16 @@ export default function Studio() {
                       onClick={() => externalInput.current?.click()}
                     >
                       <Import size={15} />
-                      Já tem arquivos Antigravity, Claude Code, Codex ou
-                      ChatGPT? Importar ZIP, Markdown ou TOML
+                      Importar pacote existente (.zip, .md ou .toml)
                     </button>
                   </section>
-                  <div className="page-footer">
+                  <footer className="page-footer">
                     <span>
-                      <ShieldCheck size={14} />
-                      Privacidade por padrão. Criatividade sem limites.
+                      <ShieldCheck size={14} strokeWidth={1.65} />
+                      Dados salvos localmente neste navegador.
                     </span>
                     <span>Agex · 2026</span>
-                  </div>
+                  </footer>
                 </>
               )}
               {view === "templates" && (

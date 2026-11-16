@@ -17,7 +17,7 @@ test("criar, editar, prévia, exportar, recarregar e importar backup", async ({
   });
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /Suas possibilidades/ }),
+    page.getByRole("heading", { name: "Seus agentes", exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("library.png"),
@@ -196,7 +196,7 @@ test("acessibilidade e navegação por teclado nas telas principais", async ({
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /Suas possibilidades/ }),
+    page.getByRole("heading", { name: "Seus agentes", exact: true }),
   ).toBeVisible();
   const library = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
@@ -361,7 +361,9 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
     page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
   ).toContainText("agy --agent my-agent --model claude-sonnet-5-5-high");
   await expect(
-    page.getByRole("button", { name: /GPT/i, exact: false }),
+    page
+      .locator(".model-picker")
+      .getByRole("button", { name: /GPT/i, exact: false }),
   ).toHaveCount(0);
 
   await page.getByRole("button", { name: "4 Integrações" }).click();
@@ -584,7 +586,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   });
 
   const showPreview = async () => {
-    const tab = page.getByRole("button", { name: /^Prévia/ });
+    const tab = page.getByRole("button", { name: /^Pré-visualização/ });
     if (await tab.isVisible()) await tab.click();
   };
   const showEditor = async () => {
@@ -594,7 +596,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
 
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /Menos configuração/ }),
+    page.getByRole("heading", { name: /Configure uma vez/ }),
   ).toBeVisible();
 
   await page
@@ -606,7 +608,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   await expect(page.getByRole("status")).toContainText(
     /Conversão Antigravity → Claude Code/,
   );
-  await page.getByRole("button", { name: /Opus/ }).click();
+  await page.getByRole("button", { name: /^Opus \(alias oficial\)/ }).click();
   await page.getByLabel(/Nível de esforço/).selectOption("high");
 
   // Add HTTP MCP server
@@ -644,7 +646,10 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
 
   const [ccDownload] = await Promise.all([
     page.waitForEvent("download"),
-    page.getByRole("button", { name: /Exportar ZIP/ }).click(),
+    page
+      .getByRole("complementary", { name: "Pré-visualização" })
+      .getByRole("button", { name: "Exportar ZIP" })
+      .click(),
   ]);
   const ccZip = await JSZip.loadAsync(
     await readFile((await ccDownload.path())!),
