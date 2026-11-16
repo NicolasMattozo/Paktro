@@ -38,7 +38,7 @@ export default function ModelPicker({ pack, updatePack }: Props) {
 
   if (pack.target === "chatgpt-plugin") {
     return (
-      <div className="field">
+      <div className="field model-picker">
         <span>Modelo e execução</span>
         <div className="info-box compact-info">
           <Info size={16} />
@@ -65,7 +65,7 @@ export default function ModelPicker({ pack, updatePack }: Props) {
       });
 
     return (
-      <div className="field">
+      <div className="field model-picker">
         <span>Modelo no Claude Code</span>
         <div className="model-grid platform-model-grid">
           {catalog.models.map((m) => (
@@ -121,7 +121,7 @@ export default function ModelPicker({ pack, updatePack }: Props) {
       });
 
     return (
-      <div className="field">
+      <div className="field model-picker">
         <span>Modelo e raciocínio no Codex</span>
         <div className="model-grid platform-model-grid">
           {catalog.models.map((m) => (
@@ -217,7 +217,7 @@ export default function ModelPicker({ pack, updatePack }: Props) {
       <details className="session-models" open={isSession || undefined}>
         <summary>
           <span>Preferência de sessão (opcional)</span>
-          <span className="mini-badge">
+          <span className={`mini-badge ${isSession ? "is-session" : ""}`}>
             {isSession ? modelLabel(ag.model) : "Opcional · CLI"}
           </span>
         </summary>

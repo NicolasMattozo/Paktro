@@ -302,6 +302,10 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
   await expect(
     page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
   ).toContainText("agy --agent my-agent --model gemini-4-hydrogen-xhigh");
+  await page.screenshot({
+    path: testInfo.outputPath("identity-model-picker.png"),
+    fullPage: true,
+  });
   if (testInfo.project.name === "mobile")
     await page.getByRole("button", { name: /Pré-visualização/ }).click();
   await expect(
@@ -572,6 +576,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   page,
   baseURL,
 }, testInfo) => {
+  test.slow();
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -605,7 +610,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
 
   // 1. Switch to Claude Code
   await page.getByRole("button", { name: /Claude Code/ }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator(".conversion-notice")).toContainText(
     /Conversão Antigravity → Claude Code/,
   );
   await page.getByRole("button", { name: /^Opus \(alias oficial\)/ }).click();
@@ -629,13 +634,15 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
     .analyze();
   expect(ccA11y.violations).toEqual([]);
 
+  const preview = page.getByRole("complementary", { name: "Pré-visualização" });
+
   await showPreview();
-  await expect(page.getByText("Estrutura validada • Claude Code")).toBeVisible();
+  await expect(preview.getByText("Estrutura validada • Claude Code")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: ".claude/agents/code-reviewer.md" }),
+    preview.getByRole("button", { name: ".claude/agents/code-reviewer.md", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: ".mcp.json" }).click();
-  await expect(page.getByLabel("Conteúdo do arquivo")).toContainText(
+  await preview.getByRole("button", { name: ".mcp.json", exact: true }).click();
+  await expect(preview.getByLabel("Conteúdo do arquivo")).toContainText(
     '"type": "http"',
   );
 
@@ -646,10 +653,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
 
   const [ccDownload] = await Promise.all([
     page.waitForEvent("download"),
-    page
-      .getByRole("complementary", { name: "Pré-visualização" })
-      .getByRole("button", { name: "Exportar ZIP" })
-      .click(),
+    preview.getByRole("button", { name: "Exportar ZIP", exact: true }).click(),
   ]);
   const ccZip = await JSZip.loadAsync(
     await readFile((await ccDownload.path())!),
@@ -662,8 +666,10 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   await showEditor();
   await page.getByRole("button", { name: /1\s*Identidade/ }).click();
   await page.getByRole("button", { name: /Codex em projeto/ }).click();
-  await expect(page.getByRole("status")).toContainText(/Conversão.*Codex/);
-  await page.getByRole("button", { name: /gpt-5\.4-mini/i }).click();
+  await expect(page.locator(".conversion-notice")).toContainText(
+    /Conversão.*Codex/,
+  );
+  await page.getByRole("button", { name: /GPT-5\.4 Mini/i }).click();
   await page.getByLabel(/Esforço de raciocínio/).selectOption("high");
 
   const cxA11y = await new AxeBuilder({ page })
@@ -676,12 +682,14 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   expect(cxOverflow).toBe(true);
 
   await showPreview();
-  await expect(page.getByText("Estrutura validada • OpenAI Codex")).toBeVisible();
-  await expect(page.getByRole("button", { name: "AGENTS.md" })).toBeVisible();
-  await page
-    .getByRole("button", { name: ".codex/agents/code-reviewer.toml" })
+  await expect(preview.getByText("Estrutura validada • Codex")).toBeVisible();
+  await expect(
+    preview.getByRole("button", { name: "AGENTS.md", exact: true }),
+  ).toBeVisible();
+  await preview
+    .getByRole("button", { name: ".codex/agents/code-reviewer.toml", exact: true })
     .click();
-  await expect(page.getByLabel("Conteúdo do arquivo")).toContainText(
+  await expect(preview.getByLabel("Conteúdo do arquivo")).toContainText(
     'model = "gpt-5.4-mini"',
   );
   await page.screenshot({
@@ -689,20 +697,20 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
     fullPage: true,
   });
 
-  // 3. Switch to ChatGPT Plugin + stdio warning check
+  // 3. Switch to ChatGPT Plugin + stdio blocker then HTTP recovery
   await showEditor();
   await page.getByRole("button", { name: /1\s*Identidade/ }).click();
   await page
     .getByRole("button", { name: /Skill \/ plugin para ChatGPT/ })
     .click();
-  await expect(page.getByRole("status")).toContainText(/ChatGPT/);
+  await expect(page.locator(".conversion-notice")).toContainText(/ChatGPT/);
   await expect(
     page.getByText(/não fixam modelo de IDE no/i),
   ).toBeVisible();
 
   await page.getByRole("button", { name: /4\s*Integrações/ }).click();
   await page.getByLabel("Transporte").selectOption("stdio");
-  await page.getByLabel("Comando").fill("npx");
+  await page.getByLabel("Comando", { exact: true }).fill("npx");
 
   const gpOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -714,10 +722,31 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   expect(gpA11y.violations).toEqual([]);
 
   await showPreview();
-  await expect(page.getByText(/stdio/i).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "plugin.json" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "skills/code-reviewer/SKILL.md" }),
+    preview.getByText(/não é suportado no ChatGPT Web/i),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("button", { name: "Exportar ZIP", exact: true }),
+  ).toBeDisabled();
+
+  await showEditor();
+  await page.getByLabel("Transporte").selectOption("http");
+  await page
+    .getByLabel("URL do servidor")
+    .fill("https://mcp.example.com/github");
+
+  await showPreview();
+  await expect(
+    preview.getByText("Estrutura validada • ChatGPT Plugin"),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("button", { name: "plugin.json", exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("button", { name: "skills/code-reviewer/SKILL.md", exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("button", { name: "mcp.json", exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("chatgpt-plugin-editor.png"),
