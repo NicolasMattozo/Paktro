@@ -1,92 +1,88 @@
 # Agex
 
-Gerador visual de configurações Google Antigravity. Interface em português, sem conta, banco de dados ou API de aplicação. O editor, a validação, os backups e a geração de ZIP funcionam no navegador. A ponte MCP é um programa local opcional e separado.
+Construtor visual multiplataforma de pacotes de agentes de IA (**Google Antigravity**, **Claude Code**, **OpenAI Codex** e **ChatGPT Plugin**). Interface em português, gratuita e 100% no navegador, sem conta, banco de dados ou API de aplicação. O editor, a validação, a conversão entre plataformas, os backups e a geração de ZIP funcionam localmente no cliente. A ponte MCP (**Agex Bridge**) é um programa local opcional e separado.
 
-## Executar
+![Agex - Configure uma vez. Exporte no formato certo.](public/og-image.png)
 
-Requer Node.js 22 ou superior e npm.
+## Plataformas e formatos suportados
+
+Cada destino possui seu próprio adaptador, catálogo nativo e mapeamento versionado em `src/platforms/`:
+
+| Plataforma | Mapeamento | Arquivos gerados |
+| --- | --- | --- |
+| **Google Antigravity** | `antigravity-2026-11-12` | `.agents/agents/<slug>.md`, `.agents/rules/*.md`, `.agents/skills/*/SKILL.md`, `.agents/mcp_config.json`, `AGEX-SETUP.md` (modelos de sessão) |
+| **Claude Code** | `claude-code-2026-11-13` | `.claude/agents/<slug>.md`, `.claude/rules/*.md`, `.claude/skills/*/SKILL.md`, `.mcp.json`, `CLAUDE.md` opcional (bloco gerenciado), `AGEX-SETUP.md` |
+| **OpenAI Codex** | `codex-2026-11-13` | `AGENTS.md` (bloco gerenciado), `.codex/agents/<slug>.toml`, `.agents/skills/*/SKILL.md`, `.codex/config.toml` (mesclado via parser TOML), `AGEX-SETUP.md` |
+| **ChatGPT Plugin** | `chatgpt-plugin-2026-11-13` | `plugin.json` (`agent-plugins.org` 1.0.0), `skills/*/SKILL.md`, `mcp.json` (`streamable-http` remoto), `AGEX-SETUP.md` |
+
+Além disso, todo ZIP exportado inclui `agex.json` para backup e reimportação fiel no editor.
+
+## Executar localmente
+
+Requer Node.js 22 ou superior e npm (apenas para rodar a aplicação e a ponte opcional — os agentes gerados funcionam em projetos de qualquer linguagem).
 
 ```sh
 npm ci
 npm run dev
 ```
 
-Abra **http://localhost:3000**. Para a versão de produção:
+Abra **http://localhost:3000**. Para gerar e servir a versão estática de produção:
 
 ```sh
 npm run build
 npm start
 ```
 
-`out/` contém o site estático, pronto para servir em qualquer hospedagem estática na raiz do domínio. `npm start` serve essa pasta em loopback; `PORT` ou `--port` muda a porta. A compilação não depende de fontes, imagens ou APIs externas.
+`out/` contém o site estático (`output: "export"`), pronto para hospedar na Vercel ou em qualquer servidor estático na raiz do domínio. `npm start` serve essa pasta em loopback; `PORT` ou `--port` muda a porta. A compilação não depende de fontes, imagens ou APIs externas.
+
+> **Uso hospedado (Vercel) vs. Ponte local:** toda a criação, validação, conversão entre plataformas, importação/exportação de ZIP e backups JSON funciona normalmente no navegador pela versão hospedada. Já a **Agex Bridge** escuta em `127.0.0.1` localmente; navegadores costumam pedir permissão ou bloquear requisições de origens HTTPS remotas para `127.0.0.1`, então para usar a sincronização ao vivo com a IA rode o app localmente (`npm run dev` ou `npm start`).
 
 ## O que está implementado
 
-- Biblioteca local de conjuntos (cada conjunto contém um agente, regras, skills e MCPs), com criação, renomeação pelo editor, duplicação, exclusão confirmada, busca, ordenação, etiquetas e comparação de conteúdo.
-- Cinco templates universais (agnósticos de linguagem): revisor de código, frontend, segurança, testes e genérico.
-- Editor em quatro etapas com identidade, especialidade, objetivo, modelo (`Herdar`, **Gemini 4 Hydrogen** nos níveis `low`, `medium`, `high` e `xhigh`/Extra, **Gemini 4 Argon**, **Gemini 3.8 Flash**, **Claude Opus 5.5** e **Claude Sonnet 5.5** nos níveis `low`, `medium` e `high`, **Orchestrator (Argon)**, `Flash` e `Pro`), papéis, ferramentas e política de comandos.
-- Galerias e edição visual de regras e skills universais para qualquer linguagem/stack, incluindo ativação, desativação, remoção e criação de procedimentos próprios.
-- Regras com os quatro modos de ativação, incluindo padrões glob.
-- Configuração visual de servidores MCP `stdio` (em qualquer linguagem: Python, Node, Go, Rust, Docker etc.) e `Streamable HTTP`, sem executar servidores ou solicitar credenciais no editor, com guia passo a passo de conexão.
-- Prévia imediata de árvore e código, destaque simples de sintaxe, cópia, arquivo individual e ZIP com guia `AGEX-SETUP.md` (quando um modelo específico de sessão é selecionado) e backup JSON separado (`agex.json`).
-- Persistência automática em `localStorage` (`agex:library:v1`, com leitura retrocompatível de `agent-studio:library:v1`), tratamento de indisponibilidade/cota/corrupção e detecção de alterações em outra aba.
-- Backup JSON versionado; importação preserva agentes existentes e atribui novos IDs para evitar sobrescritas.
-- Importação de agentes Markdown e ZIP Antigravity, reconstruindo os campos suportados e suas dependências.
-- Comparação de propriedades e conteúdos gerados entre dois conjuntos.
-- Ajuda, assistente por etapas, layout responsivo, foco visível e respeito a movimento reduzido.
-- Ponte MCP local bidirecional e sincronização opcional autenticada, com revisão visual e aprovação explícita (**Dar OK**) no navegador.
+- **Biblioteca local de conjuntos** (cada conjunto contém agente, regras, skills, servidores MCP e configuração específica da plataforma), com criação, renomeação, duplicação, exclusão confirmada, busca, ordenação, etiquetas e comparação lado a lado.
+- **Cinco templates universais** (agnósticos de linguagem): revisor de código, desenvolvedor frontend, analista de segurança, especialista em testes e agente genérico — com escolha imediata do destino ao criar.
+- **Editor guiado em quatro etapas:**
+  1. **Identidade:** destino do pacote (com conversão assistida entre plataformas e aviso explícito de adaptações/perdas), nome, slug, especialidade, objetivo, instruções avançadas e seleção de modelo/esforço nativa de cada plataforma.
+  2. **Ferramentas:** seleção de papéis/exposição, políticas de permissão/sandbox e catálogo de ferramentas nativas por plataforma (21 ferramentas confirmadas para Antigravity, 9 ferramentas nativas + `disallowedTools` para Claude Code, controle de `shell_tool` para Codex).
+  3. **Regras e skills:** galeria e edição visual com os quatro modos de ativação (`always`, `automatic`, `path`/globs e `manual`), ativação/desativação e criação de procedimentos próprios.
+  4. **Integrações:** configuração visual de servidores MCP `stdio` e `Streamable HTTP` sem executar comandos nem armazenar credenciais no editor, com guia de conexão por plataforma.
+- **Prévia imediata de árvore e código**, destaque simples de sintaxe, cópia, download individual, exportação em ZIP validada (bloqueia inconsistências críticas como `stdio` em plugin web do ChatGPT) e backup JSON versionado (`agex.json`).
+- **Persistência automática** em `localStorage` (`agex:library:v2`, com migração retrocompatível de `agex:library:v1` e `agent-studio:library:v1`), tratamento de indisponibilidade/cota/corrupção e detecção de alterações em outra aba.
+- **Importação multiplataforma** de arquivos `.md`, `.toml`, `.json` e pacotes `.zip` (Antigravity, Claude Code, Codex e ChatGPT Plugin), com detecção automática de formato e resolução de ambiguidade quando necessário.
+- **Ponte MCP local bidirecional (`Agex Bridge`)** com revisão visual, aprovação explícita (**Dar OK**) vinculada a hash de conteúdo, detecção de conflitos via `.agex/manifest.json` e mesclagem não destrutiva de `AGENTS.md`, `CLAUDE.md`, JSON e TOML.
 
-Nenhum agente é executado pelo site. O conteúdo só sai do navegador em um download, uma cópia explícita ou uma sincronização solicitada com a ponte local. Node.js 22+ é necessário apenas para rodar este aplicativo e a ponte opcional — os agentes gerados funcionam em projetos de qualquer linguagem.
+Nenhum agente é executado pelo site. O conteúdo só sai do navegador em um download, uma cópia explícita ou uma sincronização autorizada com a ponte local.
 
-## Formatos e compatibilidade
+## Modelos, ferramentas e compatibilidade
 
-Mapeamento versionado em `src/generators/antigravity/index.ts`: **antigravity-2026-11-12**.
+- **Google Antigravity:** o frontmatter documentado de agentes customizados aceita `inherit`, `flash` ou `pro`. Ao selecionar modelos concretos de sessão (**Gemini 4 Hydrogen** `low`/`medium`/`high`/`xhigh`, **Gemini 4 Argon**, **Gemini 3.8 Flash**, **Orchestrator (Argon)**, **Claude Opus 5.5** ou **Claude Sonnet 5.5**), o Agex exporta `model: inherit` no `.md` e gera `AGEX-SETUP.md` com os passos para ativar o modelo no seletor do App/IDE ou via CLI (`agy models`, `agy --agent <slug> --model <id>`). O catálogo reúne as 21 ferramentas documentadas em `src/templates/tools.ts`.
+- **Claude Code:** usa aliases (`inherit`, `sonnet`, `opus`, `haiku`) ou IDs completos (`claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5`), níveis de esforço (`low` a `max`), `permissionMode`, `isolation` (`none`/`worktree`) e ferramentas nativas (`Read`, `Edit`, `Write`, `Glob`, `Grep`, `Bash`, `WebFetch`, `WebSearch`, `Agent`). Regras sem `paths:` com ativação automática ou manual viram skills em `.claude/skills/`.
+- **OpenAI Codex:** gera `AGENTS.md` com bloco delimitado `<!-- AGEX:BEGIN -->`, subagentes em `.codex/agents/<slug>.toml`, skills em `.agents/skills/` e `.codex/config.toml` mesclado estruturalmente via `smol-toml`. Regras `path` são anotadas em `AGENTS.md` sem gerar `AGENTS.override.md` na raiz.
+- **ChatGPT Plugin:** gera `plugin.json` (`agent-plugins.org` `1.0.0`), `skills/*/SKILL.md` e `mcp.json` apenas para servidores remotos `streamable-http` (servidores `stdio` locais são bloqueados na validação).
 
-```text
-.agents/
-  agents/<identificador>.md
-  rules/<regra>.md
-  skills/<skill>/SKILL.md
-  mcp_config.json              # apenas com integrações habilitadas
-AGEX-SETUP.md                  # gerado quando um modelo de sessão é selecionado
-agex.json                      # backup do editor, não configuração Antigravity
-```
+Referências consultadas:
 
-Os metadados dos agentes são serializados com `yaml`; nomes e referências internos do Agex não vazam para propriedades inventadas. Como o frontmatter documentado de agentes customizados aceita apenas `inherit`, `flash` ou `pro`, a seleção de modelos concretos de sessão — **Gemini 4 Hydrogen** (`low`, `medium`, `high`, `xhigh`), **Gemini 4 Argon** (`low`, `medium`, `high`), **Gemini 3.8 Flash** (`low`, `medium`, `high`), **Orchestrator (Argon)** (`gemini-pro-orchestrator-g1-pro`), **Claude Opus 5.5** (`low`, `medium`, `high`) ou **Claude Sonnet 5.5** (`low`, `medium`, `high`) — exporta `model: inherit` no `.md` e inclui `AGEX-SETUP.md` com os passos para ativar o modelo exato no seletor do App/IDE e via CLI (`agy models`, `agy --agent <slug> --model <id>`). As referências de skills seguem `skills/<identificador>`, conforme o exemplo oficial. MCPs são definidos no arquivo de workspace; o corpo do agente explica a referência. A aplicação deliberadamente não adivinha a estrutura de MCPs inline do frontmatter.
-
-O catálogo inclui 21 ferramentas confirmadas: as 20 ferramentas padrão da documentação de hooks e `call_mcp_tool`, da documentação MCP. O seletor oferece busca e seis categorias. Os nomes e fontes ficam centralizados em `src/templates/tools.ts`. A lista documentada não garante que todas estejam disponíveis em qualquer sessão; ferramentas adicionais de navegador e MCP dependem do ambiente. A documentação de plugins informa que `send_message` pode permanecer incluída pela plataforma mesmo fora da allowlist. Agentes customizados são destinados ao **App e CLI**; os recursos do IDE e as permissões de cada sessão podem variar. Regras manuais dependem de menções no App, indisponíveis no CLI. Regras comportamentais não são controles de acesso.
-
-Referências consultadas em 12/11/2026:
-
-- [Modelos no Antigravity](https://antigravity.google/docs/models)
-- [CLI e seleção de modelo (`--model`)](https://antigravity.google/docs/cli/headless/)
-- [Agentes customizados](https://antigravity.google/docs/subagents)
-- [Regras e modos de ativação](https://antigravity.google/docs/rules/)
-- [Skills](https://antigravity.google/docs/skills/)
-- [Ferramentas padrão documentadas](https://antigravity.google/docs/hooks/#supported-tools)
-- [Allowlist de agentes em plugins](https://antigravity.google/docs/build-plugins/#subagents)
-- [MCP e configuração de workspace](https://antigravity.google/docs/mcp/)
-
-Os testes verificam o formato documentado e a resolução das referências. A execução dos arquivos no aplicativo Antigravity precisa ser conferida no ambiente em que serão instalados.
+- [Antigravity — Modelos](https://antigravity.google/docs/models) · [CLI](https://antigravity.google/docs/cli/headless/) · [Agentes customizados](https://antigravity.google/docs/subagents) · [Regras](https://antigravity.google/docs/rules/) · [Skills](https://antigravity.google/docs/skills/) · [Hooks e ferramentas](https://antigravity.google/docs/hooks/#supported-tools) · [MCP](https://antigravity.google/docs/mcp/)
+- [Claude Code — Sub-agents](https://code.claude.com/docs/en/sub-agents)
+- [OpenAI Codex — Subagents](https://developers.openai.com/codex/subagents)
+- [OpenAI — MCP / Plugins](https://developers.openai.com/api/docs/mcp)
 
 ### Importação e limites
 
-Backups usam `format: "agex"` (aceitando também backups legados `format: "agent-studio"`), `version: 1`. Versões desconhecidas são recusadas, sem descartar a biblioteca existente. Os limites são 1 MB por importação/biblioteca, 100 agentes, 30 regras, 30 skills e 20 servidores por agente. ZIPs têm limite de 100 arquivos e de 1 MB após descompactação. Caminhos inseguros e YAML com aliases são recusados.
+Backups atuais usam `format: "agex"`, `version: 2` (aceitando também backups v1 e backups legados `format: "agent-studio"`). Versões desconhecidas são recusadas sem descartar a biblioteca existente. Os limites são 1 MB por importação/biblioteca, 100 agentes, 30 regras, 30 skills e 20 servidores MCP por agente. ZIPs têm limite de 100 arquivos e 1 MB após descompactação; caminhos inseguros e YAML com aliases são recusados.
 
-Markdown isolado precisa ser um agente com frontmatter. Para referências de skills, importe o ZIP completo. Campos desconhecidos são apresentados para revisão; ferramentas desconhecidas, MCPs inline e opções MCP não suportadas são recusados para não simular compatibilidade nem descartar credenciais silenciosamente. O corpo Markdown importado é preservado nas instruções avançadas, sem tentar inferir a semântica de prompts arbitrários. A exportação preserva o significado dos campos suportados, mas não promete roundtrip textual idêntico de arquivos externos.
-
-Se o armazenamento local estiver corrompido ou for alterado por outra aba, o salvamento é suspenso. Exporte o trabalho em memória, preserve o conteúdo antigo caso precise recuperá-lo e só depois limpe os dados do site/recarregue. Cotas e políticas privadas do navegador podem impedir a persistência; o backup permanece disponível.
+Se o armazenamento local estiver corrompido ou for alterado por outra aba, o salvamento automático é suspenso para evitar perda silenciosa — exporte o backup JSON antes de recarregar ou limpar os dados do site.
 
 ## Conectar servidores MCP (do agente vs. ponte do Agex)
 
 Existem duas conexões distintas:
 
-1. **Servidores MCP usados pelo agente gerado** (etapa **Integrações**): o site gera `.agents/mcp_config.json` para o repositório do projeto (ou você pode mesclar as entradas em `~/.gemini/config/mcp_config.json` / `%USERPROFILE%\.gemini\config\mcp_config.json` para todos os projetos). Funciona para servidores `stdio` em qualquer linguagem (`uvx`, `python3`, `npx`, `docker`, binário compilado etc.) e servidores remotos `Streamable HTTP`. Por padrão o Antigravity carrega servidores sob demanda e injeta `call_mcp_tool` automaticamente na sessão (não inclua `call_mcp_tool` manualmente no `tools:` do `.md` para `agy --agent`, ou configure `"tools": { "<nome>": { "eager": true } }` no JSON local), adicione `env`, `headers`, `oauth` ou `authProviderType` somente localmente fora do site (ou via `agy mcp add`) e recarregue no CLI (`/mcp` ou `agy mcp list`), App (**Customizations → Installed → MCP Servers**) ou IDE (**MCP Servers → Manage MCP Servers → View raw config**).
-2. **Agex Bridge** (tela **Ponte local**): conecta o próprio Agex ao Antigravity para que a IA crie ou edite agentes no site (em estado `pending_review`), você revise visualmente no navegador, clique em **Dar OK (aprovar para exportar)** e a IA (ou o próprio Agex) exporte os arquivos diretamente para o projeto.
+1. **Servidores MCP usados pelo agente gerado** (etapa **Integrações**): o site gera o arquivo de configuração da plataforma escolhida (`.agents/mcp_config.json`, `.mcp.json`, `.codex/config.toml` ou `mcp.json`). Adicione segredos (`env`, `headers`, `oauth`) apenas localmente fora do editor para nunca versionar nem expor credenciais.
+2. **Agex Bridge** (tela **Ponte local**): conecta o próprio Agex ao Antigravity/IDE via MCP para que a IA crie ou atualize conjuntos na sua biblioteca local (`pending_review`), você revise visualmente no navegador, clique em **Dar OK (aprovar para exportar)** e a IA (ou o próprio site) grave os arquivos no projeto com mesclagem não destrutiva.
 
 ## Agex Bridge
 
-A ponte acompanha o projeto e usa o SDK oficial MCP. Não exige serviço pago nem acesso remoto.
+A ponte acompanha o projeto e usa o SDK oficial MCP (`@modelcontextprotocol/sdk`). Não exige serviço pago nem acesso remoto.
 
 ```sh
 npm ci
@@ -96,7 +92,7 @@ node bridge/dist/cli.mjs --help
 
 ### MCP stdio: criar, revisar e exportar conjuntos
 
-Adicione o servidor MCP à configuração do Antigravity (`.agents/mcp_config.json` do projeto ou `~/.gemini/config/mcp_config.json` para todos os projetos), usando caminhos absolutos reais (se `--file` for omitido, o padrão é `~/.agex/library.json`, ou `~/.agent-studio/library.json` se já existir legado):
+Adicione o servidor MCP à configuração do seu cliente (por exemplo, `.agents/mcp_config.json` do projeto ou `~/.gemini/config/mcp_config.json`), usando caminhos absolutos reais (se `--file` for omitido, o padrão é `~/.agex/library.json`, ou `~/.agent-studio/library.json` se já existir legado):
 
 ```json
 {
@@ -113,31 +109,29 @@ Adicione o servidor MCP à configuração do Antigravity (`.agents/mcp_config.js
 }
 ```
 
-Ou registre direto pelo CLI (use `--` antes do comando por causa da flag `--file`):
+Ou registre direto pelo CLI do Antigravity (use `--` antes do comando por causa da flag `--file`):
 
 ```sh
 agy mcp add agex -- node /caminho/agex/bridge/dist/cli.mjs --file /caminho/.agex/library.json
 ```
 
-Mantenha a pasta do projeto e suas dependências instaladas. O executável compilado é independente do diretório de trabalho, mas utiliza os pacotes instalados em `node_modules` junto ao projeto.
+Ferramentas expostas pela ponte:
 
-Ferramentas disponíveis:
+| Ferramenta | Entrada | Resultado |
+| --- | --- | --- |
+| `get_studio_catalog` | nenhuma (ou `target` opcional) | Plataformas, templates, modelos, ferramentas, permissões, regras e skills |
+| `list_packs` | nenhum parâmetro | IDs, nomes, slugs, plataformas e status (`pending_review`, `approved`, `stale`) |
+| `get_pack` | `id` UUID | Configuração, status de aprovação e prévia dos arquivos gerados |
+| `validate_pack` | `id` UUID | Validade, status de aprovação, erros, bloqueadores e avisos |
+| `create_agent` | nome, plataforma, template, campos... | Cria agente no Agex como `pending_review` para revisão no navegador |
+| `update_agent` | `id` UUID + alterações | Atualiza o conjunto e retorna o status para `pending_review` |
+| `export_pack_to_project` | `id` UUID, `projectPath`... | Grava os arquivos no projeto **somente após o OK** e registra `.agex/manifest.json` |
 
-| Ferramenta               | Entrada                    | Resultado                                                                      |
-| ------------------------ | -------------------------- | ------------------------------------------------------------------------------ |
-| `get_studio_catalog`     | nenhum parâmetro           | Templates, modelos de sessão (Gemini, Orchestrator, Claude), ferramentas, regras e skills |
-| `list_packs`             | nenhum parâmetro           | IDs, nomes, slugs, modelos e status (`pending_review`, `approved`, `stale`)    |
-| `get_pack`               | `id` UUID                  | Configuração, status de aprovação e arquivos gerados                           |
-| `validate_pack`          | `id` UUID                  | Validade, status de aprovação, erros e avisos                                  |
-| `create_agent`           | nome, template, campos...  | Cria agente no Agex como `pending_review` para o usuário revisar no site       |
-| `update_agent`           | `id` UUID + alterações     | Atualiza o agente e volta o status para `pending_review`                       |
-| `export_pack_to_project` | `id` UUID, `projectPath`   | Grava `.agents/` e `AGEX-SETUP.md` no projeto **somente após o OK**            |
-
-Por segurança, `export_pack_to_project` recusa qualquer escrita enquanto você não clicar em **Dar OK (aprovar para exportar)** no site sobre o hash exato do agente (e revalida caso a IA modifique o agente depois da aprovação). Links simbólicos e caminhos fora do projeto também são bloqueados, e `.agents/mcp_config.json` preserva outros servidores existentes.
+Por segurança, `export_pack_to_project` recusa qualquer escrita enquanto não houver **Dar OK** no hash exato do conteúdo e da plataforma atuais. Links simbólicos e caminhos fora do projeto são bloqueados, e arquivos existentes (como `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, `.agents/mcp_config.json` e `.codex/config.toml`) são mesclados preservando configurações anteriores.
 
 ### Conexão ao vivo e sincronização navegador ↔ biblioteca local
 
-Para que os agentes criados pela IA apareçam automaticamente no site e você possa dar o OK visualmente, inicie a ponte HTTP local apontando para o mesmo `--file` usado pelo MCP:
+Para sincronizar ao vivo com o navegador enquanto roda localmente, inicie a ponte HTTP apontando para o mesmo `--file` usado pelo MCP:
 
 ```sh
 export AGEX_BRIDGE_TOKEN="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
@@ -145,17 +139,9 @@ printf '%s\n' "$AGEX_BRIDGE_TOKEN"
 node bridge/dist/cli.mjs --http --origin http://localhost:3000 --port 4319 --file /caminho/.agex/library.json
 ```
 
-*(Para uso rápido na origem `http://localhost:3000`, também há `npm run bridge:live`. A variável legada `AGENT_STUDIO_BRIDGE_TOKEN` também continua aceita.)*
+*(Para uso rápido em `http://localhost:3000`, também há `npm run bridge:live`. A variável legada `AGENT_STUDIO_BRIDGE_TOKEN` também continua aceita.)*
 
-Cole o token mostrado na tela **Ponte local** e clique em **Conectar ao vivo (IA ↔ Site)** (ou use **Conferir mudanças → Confirmar sincronização** para envio manual). Mantenha esse terminal aberto e guarde o token somente no seu ambiente. A origem deve coincidir exatamente com a barra do navegador (`localhost` e `127.0.0.1` são origens diferentes).
-
-Fluxo completo:
-1. Peça no Antigravity para a IA criar um agente no Agex (`create_agent`).
-2. O agente aparece em **Meus agentes** no navegador com status **Criado pela IA · Aguarda OK**.
-3. Abra o agente no editor visual, confira/ajuste qualquer campo e clique em **Dar OK (aprovar para exportar)**.
-4. Peça à IA para exportar (`export_pack_to_project`) — ou clique em **Exportar direto para a pasta** no próprio editor.
-
-O serviço escuta somente em `127.0.0.1`, exige origem exata e token, serializa escritas com lock de arquivo, verifica revisões e hash de conteúdo aprovado e grava arquivos atomicamente. Nenhuma credencial é incluída em URLs ou persistida pelo site. O navegador pode pedir autorização de acesso à rede local ou bloquear esse acesso quando o site está hospedado remotamente; nesse caso, use o site localmente ou o backup manual.
+Cole o token mostrado na tela **Ponte local** e clique em **Conectar ao vivo (IA ↔ Site)** (ou use **Conferir mudanças → Confirmar sincronização** para envio manual). O serviço escuta somente em `127.0.0.1`, exige origem exata e token, serializa escritas com lock de arquivo e grava atomicamente.
 
 ## Desenvolvimento e verificações
 
@@ -169,27 +155,37 @@ npx playwright install chromium    # apenas se não houver navegador Playwright 
 npm run test:e2e
 ```
 
-Os testes unitários cobrem templates, todos os geradores, YAML especial, referências, importação, ZIP malicioso, backups e falhas de armazenamento. Os testes de integração usam o protocolo MCP e verificam autenticação, origem e conflitos no HTTP local. Os testes de navegador verificam desktop/celular, downloads reais, persistência, importação, edição, comparação, exclusão e acessibilidade com axe.
+Os testes unitários e de integração (`vitest run`) cobrem templates, geradores Antigravity, adaptadores multiplataforma (Claude Code, Codex, ChatGPT Plugin), conversão entre plataformas, YAML/TOML, importação de ZIP/arquivos, backups v1/v2 e ponte MCP/HTTP. Os testes E2E (`playwright test`) verificam desktop e mobile, downloads reais, persistência, fluxos multiplataforma e acessibilidade com `@axe-core/playwright`.
 
-Para usar um Chromium já instalado, defina `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. Os testes de integração e navegador precisam de permissão para abrir portas locais. `npm run test:e2e` serve a compilação existente em `out/`: execute `npm run build` após alterar a interface.
+Para usar um Chromium/Chrome já instalado, defina `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. `npm run test:e2e` serve a compilação existente em `out/` — execute `npm run build` após alterar a interface.
 
-`examples/` contém pacotes gerados com IDs e datas estáveis para os cinco templates. `npm run examples` os regenera. Os exemplos não incluem credenciais.
+`examples/` contém pacotes gerados com IDs e datas estáveis para os cinco templates (`npm run examples` os regenera).
 
 ## Organização
 
 ```text
-src/app/                    Next.js App Router e estilos
-src/components/             Biblioteca, editor, prévia e ponte
-src/schemas/                Validação Zod e avisos
-src/templates/              Catálogos e presets
-src/generators/antigravity/ Conversão determinística
+src/app/                    Next.js App Router, metadados OpenGraph e estilos
+src/components/             Biblioteca, editor em 4 etapas, prévia e ponte
+src/platforms/              Adaptadores (Antigravity, Claude Code, Codex, ChatGPT Plugin) e conversão
+src/schemas/                Validação Zod v1/v2 e avisos
+src/templates/              Catálogos de templates, modelos e ferramentas
+src/generators/antigravity/ Conversão determinística para .agents/
 src/storage/                Backup versionado e localStorage
-src/features/export/        Downloads e ZIP
-src/features/import/        Reconstrução de Markdown e ZIP
-bridge/                     MCP stdio e HTTP local opcional
-scripts/                    Compilação, exemplos e servidor estático
+src/features/               Importação, exportação ZIP e cliente da ponte
+bridge/                     Servidor MCP stdio e HTTP local opcional
+scripts/                    Compilação da ponte, exemplos e servidor estático
 examples/                   Saídas de referência
-tests/                     Testes unitários, integração e navegador
+tests/                      Testes unitários, integração e navegador (E2E + a11y)
 ```
 
-A stack é Next.js, React, TypeScript, Zod, YAML, JSZip e Lucide. Estado React e CSS próprios mantêm o editor estático e simples. Zustand, Tailwind e shadcn/ui eram sugestões da especificação, não requisitos de formato ou funcionamento.
+Stack principal: **Next.js 16**, **React 19**, **TypeScript**, **Zod 4**, **YAML**, **smol-toml**, **JSZip**, **Lucide** e **@modelcontextprotocol/sdk**.
+
+## Contribuir e Licença
+
+Contribuições, sugestões e pull requests são bem-vindos!
+
+1. Faça um fork do repositório e crie uma branch para sua mudança.
+2. Execute `npm run typecheck`, `npm test` e `npm run build` antes de abrir o PR.
+3. Abra uma issue ou pull request descrevendo o contexto e o que foi validado.
+
+Distribuído sob a licença [MIT](LICENSE).
