@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Agex — Construtor visual de agentes e ponte MCP",
+  title: "Agex",
   description:
     "Crie, revise e exporte pacotes .agents/ para o Antigravity em qualquer linguagem. Local, gratuito e sem cadastro.",
 };
