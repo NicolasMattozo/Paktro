@@ -96,4 +96,25 @@ describe("importação Antigravity", () => {
         importAntigravity(new File([content], "agent.md")),
       ).rejects.toThrow();
   });
+  it("importa layout em pasta (.agents/agents/<nome>/agent.md), normaliza aliases do CLI e preserva skills do workspace", async () => {
+    const z = new JSZip();
+    z.file(
+      ".agents/agents/reviewer/agent.md",
+      '---\nname: reviewer\ndescription: Revisor\nmodel: flash_lite\ntools:\n  - read_file\n  - edit_file\n---\n# Revisor\n\nAnalise diffs.\n',
+    );
+    z.file(
+      ".agents/skills/extra-skill/SKILL.md",
+      '---\nname: extra-skill\ndescription: Skill do workspace\n---\nPasso 1.\n',
+    );
+    const buf = await z.generateAsync({ type: "arraybuffer" });
+    const res = await importAntigravity(new File([buf], "workspace.zip"));
+    expect(res.agents).toHaveLength(1);
+    expect(res.agents[0].model).toBe("flash_lite");
+    expect(res.agents[0].tools).toEqual([
+      "view_file",
+      "replace_file_content",
+    ]);
+    expect(res.agents[0].skills.map((s) => s.id)).toEqual(["extra-skill"]);
+    expect(res.warnings.some((w) => w.includes("read_file"))).toBe(true);
+  });
 });

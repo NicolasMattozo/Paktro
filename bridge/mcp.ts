@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  convertPackTarget,
   defaultAntigravityTarget,
   defaultChatGptPluginTarget,
   defaultClaudeCodeTarget,
@@ -13,6 +14,7 @@ import {
   antigravityTargetSchema,
   chatGptPluginTargetSchema,
   claudeCodeEffortEnum,
+  claudeCodeMemoryEnum,
   claudeCodeModelEnum,
   claudeCodePermissionModeEnum,
   claudeCodeTargetSchema,
@@ -26,7 +28,7 @@ import {
   targetPlatformSchema,
 } from "../src/schemas/pack";
 import { createPack, TEMPLATES } from "../src/templates/catalog";
-import { MODEL_IDS } from "../src/templates/models";
+import { MODEL_IDS, normalizeAntigravityModelId } from "../src/templates/models";
 import { TOOL_NAMES } from "../src/templates/tools";
 import type { AgentPackV2, CommonRule, TargetPlatform } from "../src/types";
 import {
@@ -119,6 +121,9 @@ const basePackFieldsShape = {
     .optional(),
   permissionMode: claudeCodePermissionModeEnum.optional(),
   isolation: z.enum(["none", "worktree"]).optional(),
+  memory: claudeCodeMemoryEnum.optional(),
+  maxTurns: z.number().int().min(1).max(1000).optional(),
+  omitClaudeMd: z.boolean().optional(),
   shellTool: z.enum(["inherit", "disabled"]).optional(),
   includeClaudeMd: z.boolean().optional(),
   referenceAgentsMd: z.boolean().optional(),
@@ -159,6 +164,9 @@ function applyTargetPatch(
     commandExecutionPolicy?: "sandbox" | "off" | "auto" | "eager";
     permissionMode?: z.infer<typeof claudeCodePermissionModeEnum>;
     isolation?: "none" | "worktree";
+    memory?: z.infer<typeof claudeCodeMemoryEnum>;
+    maxTurns?: number;
+    omitClaudeMd?: boolean;
     shellTool?: "inherit" | "disabled";
     includeClaudeMd?: boolean;
     referenceAgentsMd?: boolean;
@@ -181,10 +189,11 @@ function applyTargetPatch(
       base.tools = args.tools as typeof TOOL_NAMES[number][];
     }
     if (args.model !== undefined) {
-      if (!(MODEL_IDS as readonly string[]).includes(args.model)) {
+      const normalizedModel = normalizeAntigravityModelId(args.model);
+      if (!normalizedModel) {
         throw new Error(`Modelo inválido para Antigravity: "${args.model}".`);
       }
-      base.model = args.model as typeof MODEL_IDS[number];
+      base.model = normalizedModel;
     }
     if (args.mainAgent !== undefined) base.mainAgent = args.mainAgent;
     if (args.subagent !== undefined) base.subagent = args.subagent;
@@ -215,6 +224,11 @@ function applyTargetPatch(
       base.permissionMode = args.permissionMode;
     }
     if (args.isolation !== undefined) base.isolation = args.isolation;
+    if (args.memory !== undefined) {
+      base.memory = args.memory === "none" ? undefined : args.memory;
+    }
+    if (args.maxTurns !== undefined) base.maxTurns = args.maxTurns;
+    if (args.omitClaudeMd !== undefined) base.omitClaudeMd = args.omitClaudeMd;
     if (args.includeClaudeMd !== undefined) {
       base.includeClaudeMd = args.includeClaudeMd;
     }
@@ -259,7 +273,7 @@ function applyTargetPatch(
 
 export function createMcpServer(file: string) {
   const server = new McpServer({
-    name: "agex-bridge",
+    name: "paktro-bridge",
     version: "2.0.0",
   });
 
@@ -298,7 +312,7 @@ export function createMcpServer(file: string) {
     "list_packs",
     {
       description:
-        "Lista os pacotes configurados na biblioteca local do Agex com plataforma alvo, versão de mapeamento e status de revisão.",
+        "Lista os pacotes configurados na biblioteca local do Paktro com plataforma alvo, versão de mapeamento e status de revisão.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
@@ -367,8 +381,12 @@ export function createMcpServer(file: string) {
       const pack = agents.find((a) => a.common.id === id);
       if (!pack) return errorResult(`Conjunto "${id}" não encontrado.`);
       const effectiveTarget = target ?? pack.target;
+      const candidate =
+        effectiveTarget === pack.target
+          ? pack
+          : convertPackTarget(pack, effectiveTarget).pack;
       const adapter = getPlatformAdapter(effectiveTarget);
-      const result = adapter.validate({ ...pack, target: effectiveTarget });
+      const result = adapter.validate(candidate);
       return jsonResult({
         id,
         target: effectiveTarget,
@@ -378,7 +396,7 @@ export function createMcpServer(file: string) {
         warnings: result.warnings,
         blockers: result.blockers,
         filesPreview: result.valid
-          ? adapter.generate({ ...pack, target: effectiveTarget }).map((f) => f.path)
+          ? adapter.generate(candidate).map((f) => f.path)
           : [],
       });
     },
@@ -450,7 +468,7 @@ export function createMcpServer(file: string) {
           filesPreview: adapter.generate(saved.pack).map((f) => f.path),
           warnings: validation.warnings,
           nextStep:
-            "Peça ao usuário para revisar o pacote no site Agex e clicar em 'Dar OK (aprovar para exportar)' antes de chamar export_pack_to_project.",
+            "Peça ao usuário para revisar o pacote no site Paktro e clicar em 'Dar OK (aprovar para exportar)' antes de chamar export_pack_to_project.",
         });
       } catch (e) {
         return errorResult(
@@ -480,14 +498,18 @@ export function createMcpServer(file: string) {
           return errorResult(`Conjunto "${args.id}" não encontrado.`);
         }
         const target: TargetPlatform = args.target ?? existing.target;
+        const baseForTarget =
+          target === existing.target
+            ? existing
+            : convertPackTarget(existing, target).pack;
         const normalizedRules = normalizeIncomingRules(args.rules);
         const normalizedMcp = args.mcpServers?.map((m) => commonMcpSchema.parse(m));
 
         let nextPack: AgentPackV2 = {
-          ...existing,
+          ...baseForTarget,
           target,
           common: {
-            ...existing.common,
+            ...baseForTarget.common,
             ...(args.name !== undefined ? { name: args.name } : {}),
             ...(args.slug !== undefined ? { slug: args.slug } : {}),
             ...(args.description !== undefined
@@ -532,7 +554,7 @@ export function createMcpServer(file: string) {
           filesPreview: adapter.generate(saved.pack).map((f) => f.path),
           warnings: validation.warnings,
           nextStep:
-            "Alterações salvas como pending_review. Solicite novo OK do usuário no site Agex antes de exportar.",
+            "Alterações salvas como pending_review. Solicite novo OK do usuário no site Paktro antes de exportar.",
         });
       } catch (e) {
         return errorResult(
@@ -546,7 +568,7 @@ export function createMcpServer(file: string) {
     "export_pack_to_project",
     {
       description:
-        "Exporta de forma não destrutiva um pacote aprovado (OK dado no site Agex) para a pasta do projeto. Requer aprovação prévia correspondente à plataforma e conteúdo atuais.",
+        "Exporta de forma não destrutiva um pacote aprovado (OK dado no site Paktro) para a pasta do projeto. Requer aprovação prévia correspondente à plataforma e conteúdo atuais.",
       inputSchema: {
         id: z.string().uuid(),
         projectPath: z.string().max(4096).optional(),

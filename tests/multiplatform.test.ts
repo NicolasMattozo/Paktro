@@ -199,6 +199,39 @@ describe("adaptador Claude Code", () => {
     pack.targets.claudeCode!.disallowedTools = ["Bash"];
     expect(PLATFORM_ADAPTERS["claude-code"].validate(pack).valid).toBe(false);
   });
+
+  it("suporta modelos Claude 5.5 / Fable, ferramentas expandidas (LSP, NotebookEdit) e memory/maxTurns/omitClaudeMd", () => {
+    const pack = createPack("reviewer", "claude-code");
+    pack.targets.claudeCode = {
+      ...pack.targets.claudeCode!,
+      model: "claude-opus-5-5",
+      tools: ["Read", "LSP", "NotebookEdit", "ToolSearch"],
+      memory: "project",
+      maxTurns: 25,
+      omitClaudeMd: true,
+    };
+    expect(PLATFORM_ADAPTERS["claude-code"].validate(pack).valid).toBe(true);
+    const files = PLATFORM_ADAPTERS["claude-code"].generate(pack);
+    const meta = frontmatterOf(
+      files.find((f) => f.path === ".claude/agents/code-reviewer.md")!.content,
+    );
+    expect(meta).toMatchObject({
+      model: "claude-opus-5-5",
+      tools: ["Read", "LSP", "NotebookEdit", "ToolSearch"],
+      memory: "project",
+      maxTurns: 25,
+      omitClaudeMd: true,
+    });
+
+    const reimported = PLATFORM_ADAPTERS["claude-code"].importFiles(files);
+    expect(reimported).not.toBeNull();
+    expect(reimported!.packs[0].targets.claudeCode).toMatchObject({
+      model: "claude-opus-5-5",
+      memory: "project",
+      maxTurns: 25,
+      omitClaudeMd: true,
+    });
+  });
 });
 
 describe("adaptador OpenAI Codex", () => {
@@ -279,6 +312,31 @@ describe("adaptador OpenAI Codex", () => {
     );
     expect(parsed).not.toHaveProperty("features");
   });
+
+  it("suporta modelos GPT-6.2 Sol / GPT-6 Luna, esforço ultra e avisa em combinação incompatível", () => {
+    const pack = createPack("reviewer", "codex");
+    pack.targets.codex = {
+      exposure: "subagent",
+      model: "gpt-6.2-sol",
+      reasoningEffort: "ultra",
+      shellTool: "inherit",
+      includeAgentsMd: false,
+    };
+    expect(PLATFORM_ADAPTERS.codex.validate(pack).valid).toBe(true);
+    const files = PLATFORM_ADAPTERS.codex.generate(pack);
+    const parsed = parseToml(
+      files.find((f) => f.path === ".codex/agents/code-reviewer.toml")!.content,
+    ) as Record<string, unknown>;
+    expect(parsed.model).toBe("gpt-6.2-sol");
+    expect(parsed.model_reasoning_effort).toBe("ultra");
+
+    pack.targets.codex.model = "gpt-6-luna";
+    expect(
+      PLATFORM_ADAPTERS.codex
+        .warnings(pack)
+        .some((w) => w.includes("gpt-6-luna") && w.includes("ultra")),
+    ).toBe(true);
+  });
 });
 
 describe("adaptador ChatGPT Plugin", () => {
@@ -303,13 +361,14 @@ describe("adaptador ChatGPT Plugin", () => {
       name: "security-analyst",
       version: "1.0.0",
       description: pack.common.description,
-      skills: "./skills/",
-      mcpServers: "./mcp.json",
     });
     expect(files.some((f) => f.path === "skills/security-analyst/SKILL.md")).toBe(
       true,
     );
     const mcp = JSON.parse(files.find((f) => f.path === "mcp.json")!.content);
+    expect(mcp.$schema).toBe(
+      "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+    );
     expect(mcp.mcpServers["cloud-api"]).toEqual({
       type: "streamable-http",
       url: "https://api.example.com/mcp",
@@ -358,11 +417,11 @@ describe("conversão explícita e migração v1 -> v2", () => {
       version: 1,
       agents: [v1Agent],
     });
-    const mem = new Map<string, string>([[LEGACY_STORAGE_KEYS[1], v1Json]]);
+    const mem = new Map<string, string>([[LEGACY_STORAGE_KEYS[2], v1Json]]);
     const read = readLibrary({ getItem: (k) => mem.get(k) ?? null });
 
     expect(read.error).toBeUndefined();
-    expect(read.migratedFromKey).toBe(LEGACY_STORAGE_KEYS[1]);
+    expect(read.migratedFromKey).toBe(LEGACY_STORAGE_KEYS[2]);
     expect(read.agents).toHaveLength(1);
     expect(read.agents[0].schemaVersion).toBe(2);
     expect(read.agents[0].target).toBe("antigravity");
@@ -372,7 +431,7 @@ describe("conversão explícita e migração v1 -> v2", () => {
       read.agents,
     );
     expect(saveErr).toBeUndefined();
-    expect(mem.get(LEGACY_STORAGE_KEYS[1])).toBe(v1Json);
+    expect(mem.get(LEGACY_STORAGE_KEYS[2])).toBe(v1Json);
     expect(mem.get(STORAGE_KEY)).toBeTruthy();
     expect(parseBackup(mem.get(STORAGE_KEY)!).version).toBe(2);
   });
@@ -481,10 +540,10 @@ describe("exportação segura não destrutiva, órfãos e catálogo MCP por plat
     expect(exported.conflicts).toEqual([]);
     expect(exported.target).toBe("codex");
 
-    // Existing AGENTS.md content preserved alongside <!-- AGEX:BEGIN pack=... -->
+    // Existing AGENTS.md content preserved alongside <!-- PAKTRO:BEGIN pack=... -->
     const agentsMd = await readFile(join(projectDir, "AGENTS.md"), "utf8");
     expect(agentsMd).toContain("# Projeto existente");
-    expect(agentsMd).toContain(`<!-- AGEX:BEGIN pack=${pack.common.id} -->`);
+    expect(agentsMd).toContain(`<!-- PAKTRO:BEGIN pack=${pack.common.id} -->`);
 
     // Existing .codex/config.toml preserved model & existing mcp_server
     const mergedToml = parseToml(
@@ -637,7 +696,9 @@ describe("endurecimento de segurança (security review)", () => {
 
     const pack = createPack("reviewer", "codex");
     pack.common.instructions =
-      "Instrução legítima\n<!-- AGEX:END pack=" +
+      "Instrução legítima\n<!-- PAKTRO:END pack=" +
+      pack.common.id +
+      " -->\n<!-- AGEX:END pack=" +
       pack.common.id +
       " -->\nFora do bloco";
     await writeStore(storeFile, [pack]);
@@ -645,6 +706,7 @@ describe("endurecimento de segurança (security review)", () => {
     const exported = await exportApprovedPack(storeFile, { id: pack.common.id });
     expect(exported.conflicts).toEqual([]);
     const agentsMd = await readFile(join(realProj, "AGENTS.md"), "utf8");
+    expect(agentsMd).toContain("<!-- paktro-escaped:END");
     expect(agentsMd).toContain("<!-- agex-escaped:END");
 
     // Reapprove pointing at a symlinked root directory -> must reject on export

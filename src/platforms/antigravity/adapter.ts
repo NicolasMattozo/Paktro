@@ -6,21 +6,27 @@ import {
   MODEL_IDS,
   isSessionModel,
   modelLabel,
+  normalizeAntigravityModelId,
 } from "../../templates/models";
-import { TOOL_CATALOG, TOOL_SOURCES } from "../../templates/tools";
-import type { AgentPackV2, GeneratedFile } from "../../types";
+import { TOOL_CATALOG, TOOL_NAMES, TOOL_SOURCES, type ToolName } from "../../templates/tools";
+import type {
+  AgentConfig,
+  AgentPackV2,
+  CommonMcpServer,
+  CommonRule,
+  CommonSkill,
+  GeneratedFile,
+} from "../../types";
 import {
   defaultAntigravityTarget,
+  inferIntentsFromAntigravityTools,
   packToLegacyAntigravity,
 } from "../common/convert";
-import { assertSafeRelativePath, SLUG_REGEX, slugify } from "../common/paths";
-import { MAPPING_VERSIONS, type MergePolicy, type PlatformAdapter } from "../types";
 import { parseFrontmatterMarkdown } from "../common/frontmatter";
-import { parseSkillMarkdown } from "../common/skills";
 import { legacyTriggerToActivation } from "../common/instructions";
-import { inferIntentsFromAntigravityTools } from "../common/convert";
-import type { AgentConfig, CommonMcpServer, CommonRule, CommonSkill } from "../../types";
-import { TOOL_NAMES, type ToolName } from "../../templates/tools";
+import { assertSafeRelativePath, SLUG_REGEX, slugify } from "../common/paths";
+import { parseSkillMarkdown } from "../common/skills";
+import { MAPPING_VERSIONS, type MergePolicy, type PlatformAdapter } from "../types";
 
 const ANTIGRAVITY_MODELS = MODEL_IDS.map((id) => {
   const family = MODEL_FAMILIES.find(
@@ -36,6 +42,12 @@ const ANTIGRAVITY_MODELS = MODEL_IDS.map((id) => {
   };
 });
 
+const CLI_TOOL_ALIASES: Record<string, ToolName> = {
+  read_file: "view_file",
+  edit_file: "replace_file_content",
+  write_file: "write_to_file",
+};
+
 export const antigravityAdapter: PlatformAdapter = {
   id: "antigravity",
   mappingVersion: MAPPING_VERSIONS.antigravity,
@@ -47,7 +59,7 @@ export const antigravityAdapter: PlatformAdapter = {
     summary:
       "Pacotes completos em .agents/ com agentes, regras, skills e mcp_config.json.",
     docsUrl: TOOL_SOURCES.agents,
-    docsVerifiedAt: "2026-11-12",
+    docsVerifiedAt: "2026-11-24",
     mappingVersion: MAPPING_VERSIONS.antigravity,
     supportsRoles: true,
     supportsModels: true,
@@ -114,7 +126,7 @@ export const antigravityAdapter: PlatformAdapter = {
   },
   importFiles(files) {
     const agentFiles = files.filter((f) =>
-      /^\.agents\/agents\/[^/]+\.md$/.test(f.path),
+      /^\.agents\/agents\/(?:[^/]+\.md|[^/]+\/agent\.md)$/.test(f.path),
     );
     const standaloneMd =
       agentFiles.length === 0 &&
@@ -138,21 +150,28 @@ export const antigravityAdapter: PlatformAdapter = {
       )
         ? metadata.trigger
         : "always_on") as AgentConfig["rules"][number]["trigger"];
-      const globs = typeof metadata.globs === "string" ? metadata.globs : "";
+      const globs =
+        typeof metadata.globs === "string"
+          ? metadata.globs
+          : typeof metadata.glob === "string"
+            ? metadata.glob
+            : "";
       const titleMatch = body.match(/^#\s+(.+)$/m);
       const cleanBody = titleMatch
         ? body.replace(/^#\s+.+\n+/, "").trim()
         : body.trim();
+      const rawDesc =
+        typeof metadata.description === "string" ? metadata.description : "";
       rulesById.set(id, {
         id,
         name: titleMatch?.[1]?.trim() || id,
         description:
-          typeof metadata.description === "string" ? metadata.description : "",
+          rawDesc || (trigger === "model_decision" ? `Regra ${id}.` : ""),
         content: cleanBody || `Diretriz ${id}.`,
         activation: legacyTriggerToActivation(
           trigger,
           globs,
-          typeof metadata.description === "string" ? metadata.description : "",
+          rawDesc || (trigger === "model_decision" ? `Regra ${id}.` : ""),
         ),
         enabled: true,
       });
@@ -185,7 +204,7 @@ export const antigravityAdapter: PlatformAdapter = {
           continue;
         }
         const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
-        if (cfg.env || cfg.headers) {
+        if (cfg.env || cfg.headers || cfg.variables || cfg.oauth) {
           warnings.push(
             `Credenciais/cabeçalhos em "${rawId}" (.agents/mcp_config.json) foram ignorados por segurança.`,
           );
@@ -197,7 +216,7 @@ export const antigravityAdapter: PlatformAdapter = {
             command: cfg.command,
             args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
             serverUrl: "",
-            enabled: true,
+            enabled: cfg.disabled !== true,
           });
         } else if (typeof cfg.serverUrl === "string" || typeof cfg.url === "string") {
           mcpServers.push({
@@ -206,7 +225,7 @@ export const antigravityAdapter: PlatformAdapter = {
             command: "",
             args: [],
             serverUrl: String(cfg.serverUrl ?? cfg.url),
-            enabled: true,
+            enabled: cfg.disabled !== true,
           });
         }
       }
@@ -216,32 +235,55 @@ export const antigravityAdapter: PlatformAdapter = {
     for (const af of targets) {
       const { metadata, body } = parseFrontmatterMarkdown(af.content);
       const rawTools = Array.isArray(metadata.tools) ? metadata.tools.map(String) : [];
-      const unknownTools = rawTools.filter(
-        (t) => !(TOOL_NAMES as readonly string[]).includes(t),
-      );
+      const normalizedTools: ToolName[] = [];
+      const unknownTools: string[] = [];
+      for (const t of rawTools) {
+        if ((TOOL_NAMES as readonly string[]).includes(t)) {
+          if (!normalizedTools.includes(t as ToolName)) {
+            normalizedTools.push(t as ToolName);
+          }
+        } else if (CLI_TOOL_ALIASES[t]) {
+          const mapped = CLI_TOOL_ALIASES[t];
+          if (!normalizedTools.includes(mapped)) {
+            normalizedTools.push(mapped);
+          }
+          warnings.push(
+            `Alias de ferramenta "${t}" convertido para o ID oficial "${mapped}".`,
+          );
+        } else {
+          unknownTools.push(t);
+        }
+      }
       if (unknownTools.length > 0) {
         throw new Error(
           `Arquivo contém ferramentas não suportadas: ${unknownTools.join(", ")}.`,
         );
       }
-      const validTools = rawTools as ToolName[];
+      const validTools = normalizedTools;
       const skillRefs = Array.isArray(metadata.skills)
         ? metadata.skills.map(String)
         : [];
       const agentSkills: CommonSkill[] = [];
-      for (const ref of skillRefs) {
-        const sid = ref.replace(/^skills\//, "");
-        const sk = skillsById.get(sid);
-        if (!sk) {
-          throw new Error(`Skill ausente no pacote: ${ref}`);
+      if (skillRefs.length > 0) {
+        for (const ref of skillRefs) {
+          const sid = ref.replace(/^skills\//, "");
+          const sk = skillsById.get(sid);
+          if (!sk) {
+            throw new Error(`Skill ausente no pacote: ${ref}`);
+          }
+          agentSkills.push(sk);
         }
-        agentSkills.push(sk);
+      } else {
+        agentSkills.push(...skillsById.values());
       }
 
+      const fallbackFileSlug = af.path.endsWith("/agent.md")
+        ? af.path.split("/").slice(-2)[0]
+        : af.path.split("/").pop()!.replace(/\.md$/, "");
       const rawSlug =
         typeof metadata.name === "string" && metadata.name.trim()
           ? metadata.name.trim()
-          : af.path.split("/").pop()!.replace(/\.md$/, "");
+          : fallbackFileSlug;
       const slug = SLUG_REGEX.test(rawSlug) ? rawSlug : slugify(rawSlug);
       const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
       const spec = body.match(/##\s+Especialidade\s*\n+([\s\S]*?)(?=^##\s+|$)/m)?.[1]?.trim() ?? "";
@@ -251,9 +293,10 @@ export const antigravityAdapter: PlatformAdapter = {
         body.match(/##\s+Instruções\s*\n+([\s\S]*?)(?=^##\s+|$)/m);
       const inst = instMatch?.[1]?.trim() || (!spec && !goal ? body.trim() : "");
       const rawModel = typeof metadata.model === "string" ? metadata.model : "inherit";
-      const model = (MODEL_IDS as readonly string[]).includes(rawModel)
-        ? (rawModel as typeof MODEL_IDS[number])
-        : "inherit";
+      const model = normalizeAntigravityModelId(rawModel) ?? "inherit";
+      if (rawModel && !normalizeAntigravityModelId(rawModel)) {
+        warnings.push(`Modelo "${rawModel}" ajustado para "inherit" na importação.`);
+      }
       const policy = (["sandbox", "off", "auto", "eager"].includes(
         String(metadata.commandExecutionPolicy),
       )
@@ -312,7 +355,7 @@ export const antigravityAdapter: PlatformAdapter = {
     return "replace-owned";
   },
   setupGuide(pack: AgentPackV2): string {
-    const setupFile = this.generate(pack).find((f) => f.path === "AGEX-SETUP.md");
+    const setupFile = this.generate(pack).find((f) => f.path === "PAKTRO-SETUP.md");
     return (
       setupFile?.content ??
       `# ${pack.common.name}\n\nExtraia a pasta \`.agents/\` na raiz do projeto.\n`

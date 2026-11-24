@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { slugSchema } from "../platforms/common/paths";
 import { isValidHttpUrl } from "../platforms/common/mcp";
-import { MODEL_IDS } from "../templates/models";
+import { MODEL_IDS, normalizeAntigravityModelId } from "../templates/models";
 import { TOOL_NAMES } from "../templates/tools";
 import type { AgentPackV2 } from "../types";
 
@@ -50,8 +50,8 @@ export const commonRuleSchema = z
   })
   .strict()
   .superRefine((rule, ctx) => {
+    if (!rule.enabled) return;
     if (
-      rule.enabled &&
       rule.activation.type === "path" &&
       rule.activation.patterns.length === 0
     ) {
@@ -59,6 +59,17 @@ export const commonRuleSchema = z
         code: z.ZodIssueCode.custom,
         path: ["activation"],
         message: "Informe pelo menos um padrão de arquivo para a regra por caminho.",
+      });
+    }
+    if (
+      rule.activation.type === "automatic" &&
+      !rule.activation.description.trim() &&
+      !rule.description.trim()
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["description"],
+        message: "Informe a descrição de quando ativar a regra por contexto/decisão do modelo.",
       });
     }
   });
@@ -136,7 +147,11 @@ export const commonMcpDraftSchema = z
   })
   .strict();
 
-const antigravityModelEnum = z.enum(MODEL_IDS);
+const antigravityModelEnum = z.preprocess(
+  (val) =>
+    typeof val === "string" ? (normalizeAntigravityModelId(val) ?? val) : val,
+  z.enum(MODEL_IDS),
+);
 const antigravityToolEnum = z.enum(TOOL_NAMES);
 
 export const antigravityTargetSchema = z
@@ -153,12 +168,21 @@ export const claudeCodeToolEnum = z.enum([
   "Read",
   "Edit",
   "Write",
+  "NotebookEdit",
   "Glob",
   "Grep",
+  "LSP",
   "Bash",
+  "PowerShell",
   "WebFetch",
   "WebSearch",
   "Agent",
+  "Skill",
+  "ToolSearch",
+  "Monitor",
+  "SendMessage",
+  "TaskStop",
+  "TodoWrite",
 ]);
 
 export const claudeCodeModelEnum = z.enum([
@@ -166,6 +190,11 @@ export const claudeCodeModelEnum = z.enum([
   "sonnet",
   "opus",
   "haiku",
+  "fable",
+  "claude-sonnet-5-5",
+  "claude-opus-5-5",
+  "claude-haiku-5-5",
+  "claude-fable-5-2",
   "claude-sonnet-4-6",
   "claude-opus-4-6",
   "claude-haiku-4-5",
@@ -189,6 +218,13 @@ export const claudeCodePermissionModeEnum = z.enum([
   "plan",
 ]);
 
+export const claudeCodeMemoryEnum = z.enum([
+  "none",
+  "user",
+  "project",
+  "local",
+]);
+
 export const claudeCodeTargetSchema = z
   .object({
     exposure: z.enum(["main", "subagent", "both"]),
@@ -198,6 +234,9 @@ export const claudeCodeTargetSchema = z
     disallowedTools: z.array(claudeCodeToolEnum),
     permissionMode: claudeCodePermissionModeEnum,
     isolation: z.enum(["none", "worktree"]),
+    memory: claudeCodeMemoryEnum.optional(),
+    maxTurns: z.number().int().min(1).max(1000).optional(),
+    omitClaudeMd: z.boolean().optional(),
     includeClaudeMd: z.boolean(),
     referenceAgentsMd: z.boolean(),
     disableModelInvocationSkills: z.array(slugSchema).max(30),
@@ -206,6 +245,12 @@ export const claudeCodeTargetSchema = z
 
 export const codexModelEnum = z.enum([
   "inherit",
+  "gpt-6.2-sol",
+  "gpt-6.2-astra",
+  "gpt-6.1-sol",
+  "gpt-6.1-terra",
+  "gpt-6-astra",
+  "gpt-6-luna",
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.3-codex",
@@ -219,6 +264,7 @@ export const codexReasoningEffortEnum = z.enum([
   "high",
   "xhigh",
   "max",
+  "ultra",
 ]);
 
 export const codexTargetSchema = z
@@ -381,7 +427,7 @@ export const packSchema = z
 
 export const backupV2Schema = z
   .object({
-    format: z.literal("agex"),
+    format: z.enum(["paktro", "agex"]),
     version: z.literal(2),
     agents: z.array(packDraftSchema).max(100),
   })
@@ -404,4 +450,3 @@ export function validatePackSchema(pack: AgentPackV2): {
     ? { valid: true, errors: [] }
     : { valid: false, errors: result.error.issues.map((i) => i.message) };
 }
-

@@ -1,10 +1,12 @@
 import { z } from "zod";
 
-export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const slugSchema = z
   .string()
-  .regex(SLUG_REGEX, "Use apenas letras minúsculas, números e hífens.");
+  .min(1, "Informe um identificador válido.")
+  .max(64, "Use até 64 caracteres.")
+  .regex(SLUG_REGEX, "Use apenas letras minúsculas, números e hífens simples.");
 
 export function slugify(text: string): string {
   return (
@@ -12,9 +14,10 @@ export function slugify(text: string): string {
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "my-agent"
+      .slice(0, 64)
+      .replace(/-+$/g, "") || "my-agent"
   );
 }
 

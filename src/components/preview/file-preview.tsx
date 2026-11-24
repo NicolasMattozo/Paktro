@@ -223,7 +223,7 @@ export default function FilePreview({
         <p>
           Extraia o ZIP na raiz do seu projeto ou use a Ponte local.
           <br />
-          Consulte <code>AGEX-SETUP.md</code> ao mesclar com arquivos existentes.
+          Consulte <code>PAKTRO-SETUP.md</code> ao mesclar com arquivos existentes.
         </p>
       </div>
     </aside>

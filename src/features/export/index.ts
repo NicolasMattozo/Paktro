@@ -15,7 +15,7 @@ export async function createZip(
       createFolders: false,
     });
   }
-  zip.file("agex.json", serializeBackup([pack]), {
+  zip.file("paktro.json", serializeBackup([pack]), {
     date: new Date("2000-01-01T00:00:00Z"),
   });
   return zip.generateAsync({ type: "blob", compression: "DEFLATE" });

@@ -2,13 +2,67 @@ import JSZip from "jszip";
 import {
   packToLegacyAntigravity,
 } from "../../platforms/common/convert";
+import { parseFrontmatterMarkdown } from "../../platforms/common/frontmatter";
 import { assertSafeRelativePath } from "../../platforms/common/paths";
+import { CLAUDE_CODE_TOOL_NAMES } from "../../platforms/claude-code/adapter";
 import {
   getPlatformAdapter,
   PLATFORM_ADAPTERS,
 } from "../../platforms/registry";
 import { MAX_IMPORT_BYTES } from "../../storage/local";
 import type { AgentConfig, AgentPackV2, TargetPlatform } from "../../types";
+
+const CLAUDE_SPECIFIC_META_KEYS = [
+  "disallowedTools",
+  "permissionMode",
+  "effort",
+  "isolation",
+  "memory",
+  "maxTurns",
+  "omitClaudeMd",
+] as const;
+
+const CLAUDE_MODEL_IDENTIFIERS = new Set([
+  "sonnet",
+  "opus",
+  "haiku",
+  "fable",
+  "claude-sonnet-5-5",
+  "claude-opus-5-5",
+  "claude-haiku-5-5",
+  "claude-fable-5-2",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+]);
+
+const CLAUDE_TOOL_SET = new Set<string>(CLAUDE_CODE_TOOL_NAMES);
+
+function looksLikeClaudeStandaloneMd(content: string): boolean {
+  try {
+    const { metadata } = parseFrontmatterMarkdown(content);
+    if (CLAUDE_SPECIFIC_META_KEYS.some((k) => k in metadata)) return true;
+    if (typeof metadata.tools === "string") return true;
+    if (
+      Array.isArray(metadata.tools) &&
+      metadata.tools.length > 0 &&
+      metadata.tools.some((t) =>
+        CLAUDE_TOOL_SET.has(String(t).replace(/\([\s\S]*\)$/, "").trim()),
+      )
+    ) {
+      return true;
+    }
+    if (
+      typeof metadata.model === "string" &&
+      CLAUDE_MODEL_IDENTIFIERS.has(metadata.model)
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 export type SafeUploadedFile = {
   path: string;
@@ -52,7 +106,13 @@ export async function readSafeFilesFromUpload(
       assertSafeRelativePath(unsafeName);
     }
     assertSafeRelativePath(entry.name);
-    if (entry.name.toLowerCase() === "agex.json" || entry.name.toLowerCase() === "agex-setup.md") {
+    const lower = entry.name.toLowerCase();
+    if (
+      lower === "paktro.json" ||
+      lower === "paktro-setup.md" ||
+      lower === "agex.json" ||
+      lower === "agex-setup.md"
+    ) {
       continue;
     }
     const bytes = await entry.async("uint8array");
@@ -95,7 +155,21 @@ export function importFromRawFiles(
 
   if (targetHint) {
     const adapter = getPlatformAdapter(targetHint);
-    const parsed = adapter.importFiles(files);
+    const normalizedForHint =
+      targetHint === "claude-code" &&
+      files.length === 1 &&
+      files[0].path.endsWith(".md") &&
+      !files[0].path.includes("/") &&
+      files[0].path !== "CLAUDE.md" &&
+      files[0].path !== "AGENTS.md"
+        ? [{ path: `.claude/agents/${files[0].path}`, content: files[0].content }]
+        : targetHint === "codex" &&
+            files.length === 1 &&
+            files[0].path.endsWith(".toml") &&
+            !files[0].path.includes("/")
+          ? [{ path: `.codex/agents/${files[0].path}`, content: files[0].content }]
+          : files;
+    const parsed = adapter.importFiles(normalizedForHint);
     if (!parsed || parsed.packs.length === 0) {
       throw new Error(
         `Os arquivos enviados não correspondem à estrutura de ${adapter.catalog.name}.`,
@@ -111,7 +185,7 @@ export function importFromRawFiles(
 
   // Explicit platform signatures
   const hasAntigravity = files.some((f) =>
-    /^\.agents\/agents\/[^/]+\.md$/.test(f.path),
+    /^\.agents\/agents\/(?:[^/]+\.md|[^/]+\/agent\.md)$/.test(f.path),
   );
   const hasClaude = files.some(
     (f) =>
@@ -123,7 +197,10 @@ export function importFromRawFiles(
     (f) => /^\.codex\/agents\/[^/]+\.toml$/.test(f.path) || f.path === ".codex/config.toml",
   );
   const hasChatGpt = files.some(
-    (f) => f.path === "plugin.json" || /^skills\/[^/]+\/SKILL\.md$/.test(f.path),
+    (f) =>
+      f.path === "plugin.json" ||
+      f.path === ".codex-plugin/plugin.json" ||
+      /^skills\/[^/]+\/SKILL\.md$/.test(f.path),
   );
 
   const detectedOrder: TargetPlatform[] = [];
@@ -156,8 +233,26 @@ export function importFromRawFiles(
     };
   }
 
-  // Single standalone .md heuristic: check if Claude Code or Antigravity
-  if (files.length === 1 && files[0].path.endsWith(".md") && files[0].path !== "AGENTS.md") {
+  // Single standalone .md heuristic: check if Claude Code subagent or Antigravity agent
+  if (
+    files.length === 1 &&
+    files[0].path.endsWith(".md") &&
+    files[0].path !== "AGENTS.md" &&
+    files[0].path !== "CLAUDE.md"
+  ) {
+    if (looksLikeClaudeStandaloneMd(files[0].content)) {
+      const ccRes = PLATFORM_ADAPTERS["claude-code"].importFiles([
+        { path: `.claude/agents/${files[0].path}`, content: files[0].content },
+      ]);
+      if (ccRes && ccRes.packs.length > 0) {
+        return {
+          status: "ok",
+          target: "claude-code",
+          packs: ccRes.packs,
+          warnings: ccRes.warnings,
+        };
+      }
+    }
     const res = PLATFORM_ADAPTERS.antigravity.importFiles(files);
     if (res && res.packs.length > 0) {
       return {
@@ -203,6 +298,29 @@ export function importFromRawFiles(
       target: "codex",
       packs: codexSingle.packs,
       warnings: codexSingle.warnings,
+    };
+  }
+
+  const chatgptMcpOnly =
+    files.length === 1 && files[0].path === "mcp.json"
+      ? PLATFORM_ADAPTERS["chatgpt-plugin"].importFiles([
+          ...files,
+          {
+            path: "plugin.json",
+            content: JSON.stringify({
+              name: "chatgpt-plugin",
+              version: "1.0.0",
+              description: "Plugin importado de mcp.json.",
+            }),
+          },
+        ])
+      : null;
+  if (chatgptMcpOnly && chatgptMcpOnly.packs.length > 0) {
+    return {
+      status: "ok",
+      target: "chatgpt-plugin",
+      packs: chatgptMcpOnly.packs,
+      warnings: chatgptMcpOnly.warnings,
     };
   }
 

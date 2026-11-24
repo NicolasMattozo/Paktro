@@ -49,7 +49,7 @@ const exportBodySchema = z
 
 const rawBackupSyncSchema = z
   .object({
-    format: z.enum(["agex", "agent-studio"]),
+    format: z.enum(["paktro", "agex", "agent-studio"]),
     version: z.union([z.literal(1), z.literal(2)]),
     agents: z.array(z.union([packDraftSchema, draftSchema])).max(100),
   })

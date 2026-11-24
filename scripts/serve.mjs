@@ -55,7 +55,7 @@ const server = createServer(async (req, res) => {
   }
 });
 server.listen(port, "127.0.0.1", () =>
-  console.log(`Agex: http://localhost:${port}`),
+  console.log(`Paktro: http://localhost:${port}`),
 );
 for (const signal of ["SIGTERM", "SIGINT"])
   process.on(signal, () => server.close());

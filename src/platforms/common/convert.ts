@@ -13,7 +13,11 @@ import type {
   TargetPlatform,
 } from "../../types";
 import { TOOL_NAMES, type ToolName } from "../../templates/tools";
-import { MODEL_IDS, type ModelId } from "../../templates/models";
+import {
+  MODEL_IDS,
+  normalizeAntigravityModelId,
+  type ModelId,
+} from "../../templates/models";
 import {
   activationToLegacyTrigger,
   legacyTriggerToActivation,
@@ -43,6 +47,13 @@ export function inferIntentsFromAntigravityTools(
   if (tools.includes("search_web") || tools.includes("read_url_content")) {
     intents.add("use-web");
   }
+  if (
+    tools.includes("invoke_subagent") ||
+    tools.includes("define_subagent") ||
+    tools.includes("manage_subagents")
+  ) {
+    intents.add("delegate");
+  }
   if (hasMcp) {
     intents.add("use-mcp");
   }
@@ -55,13 +66,15 @@ export function inferIntentsFromClaudeTools(
 ): CapabilityIntent[] {
   const intents = new Set<CapabilityIntent>();
   if (tools.includes("Read")) intents.add("read-files");
-  if (tools.includes("Glob") || tools.includes("Grep")) {
+  if (tools.includes("Glob") || tools.includes("Grep") || tools.includes("LSP")) {
     intents.add("search-files");
   }
-  if (tools.includes("Edit") || tools.includes("Write")) {
+  if (tools.includes("Edit") || tools.includes("Write") || tools.includes("NotebookEdit")) {
     intents.add("edit-files");
   }
-  if (tools.includes("Bash")) intents.add("run-commands");
+  if (tools.includes("Bash") || tools.includes("PowerShell") || tools.includes("Monitor")) {
+    intents.add("run-commands");
+  }
   if (tools.includes("WebFetch") || tools.includes("WebSearch")) {
     intents.add("use-web");
   }
@@ -95,6 +108,10 @@ export function intentsToAntigravityTools(
       case "use-web":
         out.add("search_web");
         out.add("read_url_content");
+        break;
+      case "delegate":
+        out.add("invoke_subagent");
+        out.add("manage_subagents");
         break;
       default:
         break;
@@ -196,9 +213,11 @@ export function defaultChatGptPluginTarget(): ChatGptPluginTargetConfig {
 }
 
 export function migrateV1ToV2(v1: AgentConfig): AgentPackV2 {
-  const validModel = (MODEL_IDS as readonly string[]).includes(v1.model)
-    ? v1.model
-    : ("inherit" as ModelId);
+  const validModel =
+    normalizeAntigravityModelId(v1.model) ??
+    ((MODEL_IDS as readonly string[]).includes(v1.model)
+      ? v1.model
+      : ("inherit" as ModelId));
   const common: CommonAgentPack = {
     id: v1.id,
     name: v1.name,

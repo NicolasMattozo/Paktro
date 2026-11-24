@@ -13,10 +13,10 @@ export const TARGET_PLATFORMS: readonly TargetPlatform[] = [
 ] as const;
 
 export const MAPPING_VERSIONS: Record<TargetPlatform, string> = {
-  antigravity: "antigravity-2026-11-12",
-  "claude-code": "claude-code-2026-11-13",
-  codex: "codex-2026-11-13",
-  "chatgpt-plugin": "chatgpt-plugin-2026-11-13",
+  antigravity: "antigravity-2026-11-24",
+  "claude-code": "claude-code-2026-11-24",
+  codex: "codex-2026-11-24",
+  "chatgpt-plugin": "chatgpt-plugin-2026-11-24",
 };
 
 export type MergePolicy =

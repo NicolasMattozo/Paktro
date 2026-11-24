@@ -23,30 +23,73 @@ const CODEX_MODELS = [
     group: "Sessão",
   },
   {
+    id: "gpt-6.2-sol",
+    label: "GPT-6.2 Sol",
+    badge: "Recomendado",
+    group: "OpenAI Codex (atuais)",
+  },
+  {
+    id: "gpt-6.2-astra",
+    label: "GPT-6.2 Astra",
+    badge: "Frontier",
+    group: "OpenAI Codex (atuais)",
+  },
+  {
+    id: "gpt-6.1-sol",
+    label: "GPT-6.1 Sol",
+    badge: "CLI + IDE",
+    group: "OpenAI Codex (atuais)",
+  },
+  {
+    id: "gpt-6.1-terra",
+    label: "GPT-6.1 Terra",
+    badge: "Multimodal",
+    group: "OpenAI Codex (atuais)",
+  },
+  {
+    id: "gpt-6-astra",
+    label: "GPT-6 Astra",
+    badge: "Frontier",
+    group: "OpenAI Codex (atuais)",
+  },
+  {
+    id: "gpt-6-luna",
+    label: "GPT-6 Luna",
+    badge: "Rápido",
+    group: "OpenAI Codex (atuais)",
+  },
+  {
     id: "gpt-5.4",
     label: "GPT-5.4",
-    badge: "Frontier",
-    group: "OpenAI Codex",
+    badge: "API key / Legado",
+    group: "Legado (API key)",
   },
   {
     id: "gpt-5.4-mini",
     label: "GPT-5.4 Mini",
-    badge: "Rápido",
-    group: "OpenAI Codex",
+    badge: "API key / Legado",
+    group: "Legado (API key)",
   },
   {
     id: "gpt-5.3-codex",
     label: "GPT-5.3 Codex",
-    badge: "Código",
-    group: "OpenAI Codex",
+    badge: "API key / Legado",
+    group: "Legado (API key)",
   },
   {
     id: "gpt-5-codex",
     label: "GPT-5 Codex",
-    badge: "Código",
-    group: "OpenAI Codex",
+    badge: "API key / Legado",
+    group: "Legado (API key)",
   },
 ];
+
+const LEGACY_CODEX_MODELS = new Set([
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "gpt-5-codex",
+]);
 
 function effectiveConfig(pack: AgentPackV2): CodexTargetConfig {
   return pack.targets.codex ?? defaultCodexTarget();
@@ -87,7 +130,7 @@ function buildCodexSetupGuide(pack: AgentPackV2, cx: CodexTargetConfig): string 
     "",
   ];
   if (cx.exposure === "root" || cx.exposure === "both" || cx.includeAgentsMd) {
-    lines.push("- `AGENTS.md` — instruções e diretrizes do projeto (bloco gerenciado `<!-- AGEX:BEGIN -->`)");
+    lines.push("- `AGENTS.md` — instruções e diretrizes do projeto (bloco gerenciado `<!-- PAKTRO:BEGIN -->`)");
   }
   if (cx.exposure === "subagent" || cx.exposure === "both") {
     lines.push(`- \`.codex/agents/${pack.common.slug}.toml\` — definição nativa do subagente Codex`);
@@ -100,10 +143,10 @@ function buildCodexSetupGuide(pack: AgentPackV2, cx: CodexTargetConfig): string 
     "",
     "## Permissões e sandbox",
     "",
-    "- Subagentes no Codex herdam as políticas de sandbox e aprovação da sessão principal.",
+    "- Subagentes no Codex herdam as políticas de sandbox, aprovação e servidores MCP da sessão principal.",
     "- Não há lista de ferramentas individuais no `.toml` do subagente; use `shell_tool = false` em `[features]` apenas quando quiser desativar o shell naquele subagente.",
     "- Regras por caminho (`glob`) não geram `AGENTS.override.md` na raiz do projeto; para override por pasta específica no Codex, mova manualmente um `AGENTS.override.md` apenas para o subdiretório desejado.",
-    "- Invoque skills explícitas no Codex com `$nome-da-skill`.",
+    "- Invoque skills explícitas no Codex com `$nome-da-skill` (ou `/skills`).",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -119,18 +162,19 @@ export const codexAdapter: PlatformAdapter = {
     summary:
       "Projeto Codex com AGENTS.md, .codex/agents/*.toml, .agents/skills/ e .codex/config.toml.",
     docsUrl: "https://developers.openai.com/codex/subagents",
-    docsVerifiedAt: "2026-11-13",
+    docsVerifiedAt: "2026-11-24",
     mappingVersion: MAPPING_VERSIONS.codex,
     supportsRoles: true,
     supportsModels: true,
     models: CODEX_MODELS,
     efforts: [
       { id: "inherit", label: "Padrão da sessão" },
-      { id: "low", label: "Low" },
+      { id: "low", label: "Low (Light no App)" },
       { id: "medium", label: "Medium" },
       { id: "high", label: "High" },
-      { id: "xhigh", label: "XHigh" },
+      { id: "xhigh", label: "XHigh (Extra High)" },
       { id: "max", label: "Max" },
+      { id: "ultra", label: "Ultra" },
     ],
     tools: [],
     permissionModes: [
@@ -175,6 +219,16 @@ export const codexAdapter: PlatformAdapter = {
     if (cx.exposure === "subagent" || cx.exposure === "both") {
       out.push(
         "Subagentes Codex (.codex/agents/*.toml) herdam sandbox e aprovações da sessão principal.",
+      );
+    }
+    if (LEGACY_CODEX_MODELS.has(cx.model)) {
+      out.push(
+        `O modelo "${cx.model}" foi descontinuado no login ChatGPT do Codex (mantido apenas via chave de API). Para sessões Codex atuais, prefira gpt-6.2-sol, gpt-6.2-astra, gpt-6.1-sol ou gpt-6-luna.`,
+      );
+    }
+    if (cx.model === "gpt-6-luna" && cx.reasoningEffort === "ultra") {
+      out.push(
+        "O modelo gpt-6-luna suporta esforço de raciocínio até 'max', mas não 'ultra'.",
       );
     }
     for (const rule of pack.common.rules) {
@@ -286,7 +340,7 @@ export const codexAdapter: PlatformAdapter = {
       for (const m of enabledMcp) {
         mcpServers[m.id] =
           m.transport === "stdio"
-            ? { command: m.command, args: [...m.args] }
+            ? { command: m.command, args: m.args.filter((x) => x.length > 0) }
             : { url: m.serverUrl, enabled: true };
       }
       assertSafeRelativePath(".codex/config.toml");
@@ -298,7 +352,7 @@ export const codexAdapter: PlatformAdapter = {
     }
 
     files.push({
-      path: "AGEX-SETUP.md",
+      path: "PAKTRO-SETUP.md",
       kind: "guide",
       content: buildCodexSetupGuide(pack, cx),
     });
@@ -315,7 +369,7 @@ export const codexAdapter: PlatformAdapter = {
       /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(f.path),
     );
     const hasAntigravityAgents = files.some((f) =>
-      /^\.agents\/agents\/[^/]+\.md$/.test(f.path),
+      /^\.agents\/agents\/(?:[^/]+\.md|[^/]+\/agent\.md)$/.test(f.path),
     );
 
     // Avoid hijacking Antigravity packages when they contain .agents/agents/*.md
@@ -353,7 +407,8 @@ export const codexAdapter: PlatformAdapter = {
             cfg.env ||
             cfg.http_headers ||
             cfg.env_http_headers ||
-            cfg.bearer_token_env_var
+            cfg.bearer_token_env_var ||
+            cfg.oauth
           ) {
             warnings.push(
               `Referências de credenciais em [mcp_servers.${rawId}] (.codex/config.toml) foram ignoradas no backup por segurança.`,
@@ -391,6 +446,7 @@ export const codexAdapter: PlatformAdapter = {
       "high",
       "xhigh",
       "max",
+      "ultra",
     ]);
 
     const packs: AgentPackV2[] = [];
@@ -535,4 +591,3 @@ export const codexAdapter: PlatformAdapter = {
     };
   },
 };
-

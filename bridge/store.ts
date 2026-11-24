@@ -446,7 +446,7 @@ export async function exportApprovedPack(
     const review = reviews[id];
     if (!review || review.status !== "approved") {
       throw new Error(
-        `O conjunto "${pack.common.name}" ainda está aguardando seu OK no site Agex. Revise-o na aba "Ponte local" / Editor, clique em "Dar OK (aprovar para exportar)" e tente novamente.`,
+        `O conjunto "${pack.common.name}" ainda está aguardando seu OK no site Paktro. Revise-o na aba "Ponte local" / Editor, clique em "Dar OK (aprovar para exportar)" e tente novamente.`,
       );
     }
 
@@ -470,7 +470,7 @@ export async function exportApprovedPack(
     const currentHash = sha256Key(pack, boundProject);
     if (!review.approvedHash || review.approvedHash !== currentHash) {
       throw new Error(
-        `O conjunto "${pack.common.name}" foi alterado após o último OK (ou mudou de plataforma/versão). Revise no site Agex e clique em "Dar OK" novamente antes de exportar.`,
+        `O conjunto "${pack.common.name}" foi alterado após o último OK (ou mudou de plataforma/versão). Revise no site Paktro e clique em "Dar OK" novamente antes de exportar.`,
       );
     }
 

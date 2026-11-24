@@ -6,10 +6,10 @@ const MUTED_LIGHT = "#ECEEF5";
 const MUTED_MID = "#DCE0EC";
 
 /**
- * Agex "Pack Bot": isometric cube whose three faces stand for the agent,
+ * Paktro "Pack Bot": isometric cube whose three faces stand for the agent,
  * rules and skills of a pack, with eyes on the front face.
  */
-export function AgexMark({
+export function PaktroMark({
   size = 26,
   className,
 }: {
@@ -48,6 +48,8 @@ export function AgexMark({
     </svg>
   );
 }
+
+export const AgexMark = PaktroMark;
 
 /**
  * Bare isometric pack cube for cards, hero assembly, and wireframe empty states.

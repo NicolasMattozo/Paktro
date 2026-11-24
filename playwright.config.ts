@@ -1,6 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
-const port = Number(process.env.AGEX_E2E_PORT || 3100);
+const port = Number(
+  process.env.PAKTRO_E2E_PORT || process.env.AGEX_E2E_PORT || 3100,
+);
 const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({

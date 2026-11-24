@@ -309,10 +309,10 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
   if (testInfo.project.name === "mobile")
     await page.getByRole("button", { name: /Pré-visualização/ }).click();
   await expect(
-    page.getByRole("button", { name: "AGEX-SETUP.md", exact: true }),
+    page.getByRole("button", { name: "PAKTRO-SETUP.md", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "AGEX-SETUP.md", exact: true })
+    .getByRole("button", { name: "PAKTRO-SETUP.md", exact: true })
     .click();
   await expect(page.locator(".code-view")).toContainText(
     "gemini-4-hydrogen-xhigh",
@@ -338,12 +338,24 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
   ).toContainText("agy --agent my-agent --model gemini-3.8-flash-low");
 
   await page
-    .getByRole("button", { name: /Orchestrator \(Argon\)/, exact: false })
+    .getByRole("button", { name: /Gemini 4 Neon/, exact: false })
     .click();
-  await expect(page.getByLabel("Nível de raciocínio")).toHaveCount(0);
   await expect(
     page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
-  ).toContainText("agy --agent my-agent --model gemini-pro-orchestrator-g1-pro");
+  ).toContainText("agy --agent my-agent --model gemini-4-neon-high");
+
+  await page
+    .getByRole("button", { name: /^Orchestrator\b/, exact: false })
+    .click();
+  await expect(
+    page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
+  ).toContainText("agy --agent my-agent --model gemini-pro-orchestrator-neon");
+  await page
+    .getByLabel("Planejador (Orchestrator)")
+    .selectOption("gemini-pro-orchestrator-argon");
+  await expect(
+    page.getByLabel("Comando para ativar o modelo no CLI", { exact: true }),
+  ).toContainText("agy --agent my-agent --model gemini-pro-orchestrator-argon");
 
   await page
     .getByRole("button", { name: /Claude Opus 5\.5/, exact: false })
@@ -381,20 +393,20 @@ test("modelos Gemini 4 Hydrogen e Argon na identidade e guia MCP na ponte", asyn
     await page.getByRole("button", { name: "Abrir menu" }).click();
   await page.getByRole("button", { name: "Ponte local", exact: true }).click();
   await page
-    .getByLabel("Pasta do Agex no seu computador")
-    .fill("/home/dev/agex");
+    .getByLabel("Pasta do Paktro no seu computador")
+    .fill("/home/dev/paktro");
   await expect(
     page.locator(".bridge-walkthrough .warning"),
   ).toHaveCount(0);
   await page
     .getByLabel("Caminho completo da biblioteca JSON")
-    .fill("/home/dev/agex.json");
+    .fill("/home/dev/paktro.json");
   await expect(
     page.getByLabel("Alternativa rápida pelo CLI (agy mcp add)", {
       exact: true,
     }),
   ).toContainText(
-    "agy mcp add agex -- node '/home/dev/agex/bridge/dist/cli.mjs' --file '/home/dev/agex.json'",
+    "agy mcp add paktro -- node '/home/dev/paktro/bridge/dist/cli.mjs' --file '/home/dev/paktro.json'",
   );
   const bridgeA11y = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
@@ -660,7 +672,7 @@ test("multiplataforma: Claude Code, Codex e ChatGPT Plugin no editor, prévia e 
   );
   expect(Object.keys(ccZip.files)).toContain(".claude/agents/code-reviewer.md");
   expect(Object.keys(ccZip.files)).toContain(".mcp.json");
-  expect(Object.keys(ccZip.files)).toContain("agex.json");
+  expect(Object.keys(ccZip.files)).toContain("paktro.json");
 
   // 2. Switch to OpenAI Codex
   await showEditor();

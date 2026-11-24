@@ -1,6 +1,7 @@
 import { validatePackSchema } from "../../schemas/pack";
 import type {
   AgentPackV2,
+  ClaudeCodeMemoryScope,
   ClaudeCodeTargetConfig,
   ClaudeCodeToolName,
   CommonMcpServer,
@@ -19,7 +20,7 @@ import {
   renderFrontmatterMarkdown,
 } from "../common/frontmatter";
 import { isInsecureHttpRemoteUrl } from "../common/mcp";
-import { assertSafeRelativePath, SLUG_REGEX, slugify } from "../common/paths";
+import { assertSafeRelativePath, parsePatterns, SLUG_REGEX, slugify } from "../common/paths";
 import { parseSkillMarkdown, renderSkillMarkdown } from "../common/skills";
 import { MAPPING_VERSIONS, type MergePolicy, type PlatformAdapter } from "../types";
 
@@ -27,12 +28,21 @@ export const CLAUDE_CODE_TOOL_NAMES: readonly ClaudeCodeToolName[] = [
   "Read",
   "Glob",
   "Grep",
+  "LSP",
   "Edit",
   "Write",
+  "NotebookEdit",
   "Bash",
+  "PowerShell",
+  "Monitor",
   "WebFetch",
   "WebSearch",
   "Agent",
+  "Skill",
+  "ToolSearch",
+  "SendMessage",
+  "TaskStop",
+  "TodoWrite",
 ] as const;
 
 export const CLAUDE_CODE_TOOLS = [
@@ -46,14 +56,21 @@ export const CLAUDE_CODE_TOOLS = [
   {
     id: "Edit",
     name: "Editar trechos (Edit)",
-    description: "Faz edições localizadas em arquivos existentes.",
+    description: "Faz edições localizadas por correspondência exata em arquivos.",
     group: "files",
     capabilityIntent: "edit-files" as const,
   },
   {
     id: "Write",
     name: "Criar/sobrescrever arquivo (Write)",
-    description: "Cria novos arquivos ou grava conteúdo completo.",
+    description: "Cria novos arquivos ou grava conteúdo completo em UTF-8.",
+    group: "files",
+    capabilityIntent: "edit-files" as const,
+  },
+  {
+    id: "NotebookEdit",
+    name: "Editar Jupyter Notebook (NotebookEdit)",
+    description: "Modifica células de cadernos Jupyter (.ipynb).",
     group: "files",
     capabilityIntent: "edit-files" as const,
   },
@@ -72,9 +89,30 @@ export const CLAUDE_CODE_TOOLS = [
     capabilityIntent: "search-files" as const,
   },
   {
+    id: "LSP",
+    name: "Inteligência de linguagem (LSP)",
+    description: "Ir para definição, referências e diagnósticos via Language Server.",
+    group: "search",
+    capabilityIntent: "search-files" as const,
+  },
+  {
     id: "Bash",
     name: "Executar terminal (Bash)",
     description: "Executa comandos de shell no ambiente do Claude Code.",
+    group: "commands",
+    capabilityIntent: "run-commands" as const,
+  },
+  {
+    id: "PowerShell",
+    name: "Executar PowerShell (PowerShell)",
+    description: "Executa comandos nativos no PowerShell quando disponível.",
+    group: "commands",
+    capabilityIntent: "run-commands" as const,
+  },
+  {
+    id: "Monitor",
+    name: "Monitorar processo/stream (Monitor)",
+    description: "Acompanha logs ou eventos contínuos em segundo plano.",
     group: "commands",
     capabilityIntent: "run-commands" as const,
   },
@@ -99,6 +137,37 @@ export const CLAUDE_CODE_TOOLS = [
     group: "orchestration",
     capabilityIntent: "delegate" as const,
   },
+  {
+    id: "Skill",
+    name: "Invocar skill (Skill)",
+    description: "Executa skills sob demanda durante a tarefa.",
+    group: "orchestration",
+  },
+  {
+    id: "ToolSearch",
+    name: "Buscar ferramentas MCP diferidas (ToolSearch)",
+    description: "Descobre e carrega schemas de ferramentas MCP sob demanda.",
+    group: "orchestration",
+    capabilityIntent: "use-mcp" as const,
+  },
+  {
+    id: "SendMessage",
+    name: "Enviar mensagem entre agentes (SendMessage)",
+    description: "Comunica com teammates, subagentes retomados ou sessões.",
+    group: "orchestration",
+  },
+  {
+    id: "TaskStop",
+    name: "Encerrar tarefa em background (TaskStop)",
+    description: "Interrompe comandos ou agentes em execução por ID.",
+    group: "orchestration",
+  },
+  {
+    id: "TodoWrite",
+    name: "Checklist de tarefas (TodoWrite)",
+    description: "Atualiza lista de acompanhamento quando habilitada na sessão.",
+    group: "orchestration",
+  },
 ];
 
 function effectiveConfig(pack: AgentPackV2): ClaudeCodeTargetConfig {
@@ -121,7 +190,11 @@ function buildClaudeSetupGuide(pack: AgentPackV2, cc: ClaudeCodeTargetConfig): s
     lines.push("- MCP de projeto: `.mcp.json` (mesclagem não destrutiva de `mcpServers`)");
   }
   if (cc.includeClaudeMd) {
-    lines.push("- Instruções principais: `CLAUDE.md` (via bloco gerenciado `<!-- AGEX:BEGIN -->`)");
+    lines.push("- Instruções principais: `CLAUDE.md` (via bloco gerenciado `<!-- PAKTRO:BEGIN -->`)");
+  } else {
+    lines.push(
+      "- Nota sobre `AGENTS.md`: no Claude Code v2.1.277+, se não houver `CLAUDE.md`, um `AGENTS.md` existente já é lido automaticamente.",
+    );
   }
   lines.push(
     "",
@@ -148,7 +221,7 @@ function buildClaudeSetupGuide(pack: AgentPackV2, cc: ClaudeCodeTargetConfig): s
   }
   lines.push(
     "- Regras com ativação automática ou manual são geradas como skills em `.claude/skills/`, pois `.claude/rules/` sem `paths:` sempre carrega na sessão inteira.",
-    "- Credenciais nunca são gravadas no `agex.json`; configure tokens e variáveis de ambiente fora dos arquivos versionados.",
+    "- Credenciais nunca são gravadas no `paktro.json`; configure tokens e variáveis de ambiente fora dos arquivos versionados.",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -164,7 +237,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
     summary:
       "Pacotes nativos com .claude/agents/*.md, .claude/rules/, .claude/skills/ e .mcp.json.",
     docsUrl: "https://code.claude.com/docs/en/sub-agents",
-    docsVerifiedAt: "2026-11-13",
+    docsVerifiedAt: "2026-11-24",
     mappingVersion: MAPPING_VERSIONS["claude-code"],
     supportsRoles: true,
     supportsModels: true,
@@ -178,38 +251,68 @@ export const claudeCodeAdapter: PlatformAdapter = {
       {
         id: "sonnet",
         label: "Sonnet (alias oficial)",
-        badge: "Alias",
+        badge: "Alias → 5.5",
         group: "Aliases oficiais",
       },
       {
         id: "opus",
         label: "Opus (alias oficial)",
-        badge: "Alias",
+        badge: "Alias → 5.5",
         group: "Aliases oficiais",
       },
       {
         id: "haiku",
         label: "Haiku (alias oficial)",
-        badge: "Alias",
+        badge: "Alias → 5.5",
         group: "Aliases oficiais",
+      },
+      {
+        id: "fable",
+        label: "Fable (alias oficial)",
+        badge: "Alias → 5.2",
+        group: "Aliases oficiais",
+      },
+      {
+        id: "claude-sonnet-5-5",
+        label: "Claude Sonnet 5.5",
+        badge: "ID completo",
+        group: "Modelos diretos (atuais)",
+      },
+      {
+        id: "claude-opus-5-5",
+        label: "Claude Opus 5.5",
+        badge: "ID completo",
+        group: "Modelos diretos (atuais)",
+      },
+      {
+        id: "claude-haiku-5-5",
+        label: "Claude Haiku 5.5",
+        badge: "ID completo",
+        group: "Modelos diretos (atuais)",
+      },
+      {
+        id: "claude-fable-5-2",
+        label: "Claude Fable 5.2",
+        badge: "ID completo",
+        group: "Modelos diretos (atuais)",
       },
       {
         id: "claude-sonnet-4-6",
         label: "Claude Sonnet 4.6",
-        badge: "ID completo",
-        group: "Modelos diretos",
+        badge: "4.x / Cloud",
+        group: "Versões anteriores / provedores",
       },
       {
         id: "claude-opus-4-6",
         label: "Claude Opus 4.6",
-        badge: "ID completo",
-        group: "Modelos diretos",
+        badge: "4.x / Cloud",
+        group: "Versões anteriores / provedores",
       },
       {
         id: "claude-haiku-4-5",
         label: "Claude Haiku 4.5",
-        badge: "ID completo",
-        group: "Modelos diretos",
+        badge: "4.x / Cloud",
+        group: "Versões anteriores / provedores",
       },
     ],
     efforts: [
@@ -255,13 +358,18 @@ export const claudeCodeAdapter: PlatformAdapter = {
       },
     ],
     toolNotes:
-      "Ferramentas nativas de subagentes Claude Code (Read, Edit, Write, Glob, Grep, Bash, WebFetch, WebSearch, Agent). Nunca misture nomes de outra IDE.",
+      "Ferramentas nativas de subagentes Claude Code (Read, Edit, Write, NotebookEdit, Glob, Grep, LSP, Bash, PowerShell, Monitor, WebFetch, WebSearch, Agent, Skill, ToolSearch, SendMessage, TaskStop, TodoWrite). Omitir tools herda todas as ferramentas disponíveis.",
   },
   validate(pack: AgentPackV2) {
     const base = validatePackSchema(pack);
     const errors = [...base.errors];
     const cc = effectiveConfig(pack);
-    if (cc.exposure === "main" && !cc.includeClaudeMd && !pack.common.rules.some((r) => r.enabled) && !pack.common.skills.some((s) => s.enabled)) {
+    if (
+      cc.exposure === "main" &&
+      !cc.includeClaudeMd &&
+      !pack.common.rules.some((r) => r.enabled) &&
+      !pack.common.skills.some((s) => s.enabled)
+    ) {
       errors.push(
         "Com exposição apenas como agente principal e sem CLAUDE.md, ative ao menos uma regra, skill ou marque 'Gerar CLAUDE.md'.",
       );
@@ -279,6 +387,19 @@ export const claudeCodeAdapter: PlatformAdapter = {
     if (cc.permissionMode === "bypassPermissions") {
       out.push(
         "permissionMode: bypassPermissions pula aprovações no Claude Code. Use apenas em ambientes totalmente isolados.",
+      );
+    }
+    if (
+      (cc.exposure === "subagent" || cc.exposure === "both") &&
+      cc.tools.length === 0
+    ) {
+      out.push(
+        "Nenhuma ferramenta específica marcada em tools: no Claude Code, omitir tools faz o subagente herdar todas as ferramentas disponíveis (exceto disallowedTools).",
+      );
+    }
+    if (cc.model === "fable" || cc.model === "claude-fable-5-2") {
+      out.push(
+        "Modelos Fable podem consumir créditos extras de uso (usage credits) conforme o plano da sua conta no Claude Code.",
       );
     }
     if (cc.tools.includes("Bash") && cc.permissionMode === "plan") {
@@ -394,11 +515,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
       if (cc.disallowedTools.length > 0) {
         frontmatter.disallowedTools = [...cc.disallowedTools];
       }
-      if (cc.model !== "inherit") {
-        frontmatter.model = cc.model;
-      } else {
-        frontmatter.model = "inherit";
-      }
+      frontmatter.model = cc.model;
       if (cc.effort !== "inherit") {
         frontmatter.effort = cc.effort;
       }
@@ -407,6 +524,15 @@ export const claudeCodeAdapter: PlatformAdapter = {
       }
       if (cc.isolation === "worktree") {
         frontmatter.isolation = "worktree";
+      }
+      if (cc.memory && cc.memory !== "none") {
+        frontmatter.memory = cc.memory;
+      }
+      if (cc.maxTurns !== undefined) {
+        frontmatter.maxTurns = cc.maxTurns;
+      }
+      if (cc.omitClaudeMd === true) {
+        frontmatter.omitClaudeMd = true;
       }
       if (skillIds.size > 0) {
         frontmatter.skills = [...skillIds];
@@ -440,7 +566,11 @@ export const claudeCodeAdapter: PlatformAdapter = {
         enabledMcp.map((m) => [
           m.id,
           m.transport === "stdio"
-            ? { type: "stdio", command: m.command, args: m.args }
+            ? {
+                type: "stdio",
+                command: m.command,
+                args: m.args.filter((x) => x.length > 0),
+              }
             : { type: "http", url: m.serverUrl },
         ]),
       );
@@ -452,7 +582,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
     }
 
     files.push({
-      path: "AGEX-SETUP.md",
+      path: "PAKTRO-SETUP.md",
       kind: "guide",
       content: buildClaudeSetupGuide(pack, cc),
     });
@@ -461,10 +591,10 @@ export const claudeCodeAdapter: PlatformAdapter = {
   },
   importFiles(files) {
     const agentFiles = files.filter((f) =>
-      /^\.claude\/agents\/[^/]+\.md$/.test(f.path),
+      /^\.claude\/agents\/(?:.+\/)?[^/]+\.md$/.test(f.path),
     );
     const ruleFiles = files.filter((f) =>
-      /^\.claude\/rules\/[^/]+\.md$/.test(f.path),
+      /^\.claude\/rules\/(?:.+\/)?[^/]+\.md$/.test(f.path),
     );
     const skillFiles = files.filter((f) =>
       /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f.path),
@@ -485,13 +615,17 @@ export const claudeCodeAdapter: PlatformAdapter = {
     const warnings: string[] = [];
     const rules: CommonRule[] = [];
     for (const rf of ruleFiles) {
-      const rawId = rf.path.replace(/^\.claude\/rules\/|\.md$/g, "");
+      const rawId = rf.path
+        .replace(/^\.claude\/rules\/|\.md$/g, "")
+        .replace(/\//g, "-");
       const id = SLUG_REGEX.test(rawId) ? rawId : slugify(rawId);
-      if (rf.content.startsWith("---\n")) {
+      if (rf.content.startsWith("---\n") || rf.content.startsWith("---\r\n")) {
         const { metadata, body } = parseFrontmatterMarkdown(rf.content);
         const patterns = Array.isArray(metadata.paths)
-          ? metadata.paths.map(String).filter(Boolean)
-          : [];
+          ? metadata.paths.map(String).map((s) => s.trim()).filter(Boolean)
+          : typeof metadata.paths === "string"
+            ? parsePatterns(metadata.paths)
+            : [];
         const title = body.match(/^#\s+(.+)$/m)?.[1]?.trim() || id;
         const cleanBody = body.replace(/^#\s+.+\n+/, "").trim();
         rules.push({
@@ -554,7 +688,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
             `Credenciais/cabeçalhos em "${rawId}" (.mcp.json) foram ignorados por segurança.`,
           );
         }
-        if (cfg.type === "http" && typeof cfg.url === "string") {
+        if ((cfg.type === "http" || (!cfg.type && typeof cfg.url === "string")) && typeof cfg.url === "string") {
           mcpServers.push({
             id,
             transport: "http",
@@ -577,15 +711,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
     }
 
     const validToolsSet = new Set<string>(CLAUDE_CODE_TOOL_NAMES);
-    const validModelsSet = new Set<string>([
-      "inherit",
-      "sonnet",
-      "opus",
-      "haiku",
-      "claude-sonnet-4-6",
-      "claude-opus-4-6",
-      "claude-haiku-4-5",
-    ]);
+    const validModelsSet = new Set<string>(this.catalog.models.map((m) => m.id));
     const validEffortsSet = new Set<string>([
       "inherit",
       "low",
@@ -602,6 +728,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
       "bypassPermissions",
       "plan",
     ]);
+    const validMemorySet = new Set<string>(["user", "project", "local"]);
 
     const targets = agentFiles.length > 0 ? agentFiles : files.filter((f) => f.path === "CLAUDE.md");
     const packs: AgentPackV2[] = [];
@@ -672,7 +799,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
 
       const { metadata, body } = parseFrontmatterMarkdown(af.content);
       const parseToolField = (val: unknown): ClaudeCodeToolName[] => {
-        const list = Array.isArray(val)
+        const rawList = Array.isArray(val)
           ? val.map(String)
           : typeof val === "string"
             ? val
@@ -680,13 +807,37 @@ export const claudeCodeAdapter: PlatformAdapter = {
                 .map((s) => s.trim())
                 .filter(Boolean)
             : [];
-        const unknown = list.filter((t) => !validToolsSet.has(t));
+        const normalized: ClaudeCodeToolName[] = [];
+        const unknown: string[] = [];
+        for (const item of rawList) {
+          // Handle Task(...) -> Agent(...) legacy alias and Agent(...) / Tool(specifier)
+          const bare = item.replace(/\([\s\S]*\)$/, "").trim();
+          const mappedBare = bare === "Task" ? "Agent" : bare;
+          if (mappedBare.startsWith("mcp__")) {
+            warnings.push(
+              `Filtro MCP "${item}" em subagente foi ignorado na lista de ferramentas nativas; configure servidores MCP na etapa Integrações.`,
+            );
+            continue;
+          }
+          if (validToolsSet.has(mappedBare)) {
+            if (item !== mappedBare) {
+              warnings.push(
+                `Especificador "${item}" simplificado para a ferramenta nativa "${mappedBare}".`,
+              );
+            }
+            if (!normalized.includes(mappedBare as ClaudeCodeToolName)) {
+              normalized.push(mappedBare as ClaudeCodeToolName);
+            }
+          } else {
+            unknown.push(item);
+          }
+        }
         if (unknown.length > 0) {
           throw new Error(
             `Ferramenta(s) Claude Code desconhecida(s): ${unknown.join(", ")}.`,
           );
         }
-        return list as ClaudeCodeToolName[];
+        return normalized;
       };
 
       const tools = parseToolField(metadata.tools);
@@ -705,12 +856,27 @@ export const claudeCodeAdapter: PlatformAdapter = {
       const rawEffort = typeof metadata.effort === "string" ? metadata.effort : "inherit";
       const effort = (validEffortsSet.has(rawEffort) ? rawEffort : "inherit") as ClaudeCodeTargetConfig["effort"];
       const rawPerm =
-        typeof metadata.permissionMode === "string"
-          ? metadata.permissionMode
-          : "default";
+        metadata.permissionMode === "manual"
+          ? "default"
+          : typeof metadata.permissionMode === "string"
+            ? metadata.permissionMode
+            : "default";
       const permissionMode = (validModesSet.has(rawPerm)
         ? rawPerm
         : "default") as ClaudeCodeTargetConfig["permissionMode"];
+      const memory = (
+        typeof metadata.memory === "string" && validMemorySet.has(metadata.memory)
+          ? metadata.memory
+          : undefined
+      ) as ClaudeCodeMemoryScope | undefined;
+      const maxTurns =
+        typeof metadata.maxTurns === "number" &&
+        Number.isInteger(metadata.maxTurns) &&
+        metadata.maxTurns >= 1 &&
+        metadata.maxTurns <= 1000
+          ? metadata.maxTurns
+          : undefined;
+      const omitClaudeMd = metadata.omitClaudeMd === true ? true : undefined;
 
       const skillRefs = Array.isArray(metadata.skills)
         ? metadata.skills.map(String)
@@ -757,6 +923,9 @@ export const claudeCodeAdapter: PlatformAdapter = {
             disallowedTools,
             permissionMode,
             isolation: metadata.isolation === "worktree" ? "worktree" : "none",
+            ...(memory ? { memory } : {}),
+            ...(maxTurns !== undefined ? { maxTurns } : {}),
+            ...(omitClaudeMd ? { omitClaudeMd: true } : {}),
             includeClaudeMd: hasClaudeMd,
             referenceAgentsMd: false,
             disableModelInvocationSkills,

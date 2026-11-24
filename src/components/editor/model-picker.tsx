@@ -19,11 +19,12 @@ import {
 } from "@/templates/models";
 
 const BASE_MODELS: {
-  id: Extract<ModelId, "inherit" | "flash" | "pro">;
+  id: Extract<ModelId, "inherit" | "flash_lite" | "flash" | "pro">;
   label: string;
   desc: string;
 }[] = [
   { id: "inherit", label: "Herdar sessão", desc: "Usa o modelo padrão ativo no App" },
+  { id: "flash_lite", label: "Lite", desc: "flash_lite · ultrarrápido para triagem" },
   { id: "flash", label: "Flash", desc: "Rápido e econômico para código direto" },
   { id: "pro", label: "Pro", desc: "Raciocínio mais profundo para análise" },
 ];
@@ -102,7 +103,8 @@ export default function ModelPicker({ pack, updatePack }: Props) {
         </label>
         <small>
           O subagente grava <code>model</code> com aliases oficiais (<code>sonnet</code>,{" "}
-          <code>opus</code>, <code>haiku</code>, <code>inherit</code>) ou IDs Claude verificados.
+          <code>opus</code>, <code>haiku</code>, <code>fable</code>, <code>inherit</code>) ou IDs
+          Claude 5.5 / 5.2 / 4.x verificados.
         </small>
       </div>
     );
@@ -199,7 +201,7 @@ export default function ModelPicker({ pack, updatePack }: Props) {
   return (
     <div className="field model-picker">
       <span>Modelo</span>
-      <div className="model-grid">
+      <div className="model-grid platform-model-grid">
         {BASE_MODELS.map((m) => (
           <button
             type="button"
@@ -223,9 +225,10 @@ export default function ModelPicker({ pack, updatePack }: Props) {
         </summary>
         <div className="session-models-body">
           <p className="session-help">
-            O YAML de subagentes do Antigravity aceita apenas <code>inherit</code>,{" "}
-            <code>flash</code> ou <code>pro</code>. Escolha um modelo específico aqui para
-            gerar o comando pronto do CLI e incluí-lo em <code>AGEX-SETUP.md</code>.
+            O YAML de subagentes do Antigravity aceita <code>inherit</code>,{" "}
+            <code>flash_lite</code>, <code>flash</code> ou <code>pro</code>. Escolha um
+            modelo específico de sessão aqui para gerar o comando pronto do CLI e
+            incluí-lo em <code>PAKTRO-SETUP.md</code>.
           </p>
 
           <div className="session-family-grid">
@@ -239,7 +242,9 @@ export default function ModelPicker({ pack, updatePack }: Props) {
             <div className="effort-and-command">
               {currentFamily.levels.length > 0 && (
                 <label className="field">
-                  Nível de raciocínio
+                  {currentFamily.id === "orchestrator"
+                    ? "Planejador (Orchestrator)"
+                    : "Nível de raciocínio"}
                   <select
                     value={ag.model}
                     onChange={(e) => setAntigravityModel(e.target.value as ModelId)}
@@ -278,7 +283,7 @@ export default function ModelPicker({ pack, updatePack }: Props) {
                 <small>
                   No arquivo <code>.md</code> gerado será gravado{" "}
                   <code>model: inherit</code>, preservando o modelo real no{" "}
-                  <code>AGEX-SETUP.md</code> e no <code>agex.json</code>.
+                  <code>PAKTRO-SETUP.md</code> e no <code>paktro.json</code>.
                 </small>
               </div>
             </div>
@@ -299,11 +304,14 @@ function ModelFamiliesRow({
   return (
     <>
       {MODEL_FAMILIES.filter((f) => f.session).map((f) => {
-        const badge = f.xhighAsExtra
-          ? "Low–Extra"
-          : f.levels.length > 0
-            ? "Low–High"
-            : "Sessão";
+        const badge =
+          f.id === "orchestrator"
+            ? "3 planejadores"
+            : f.xhighAsExtra
+              ? "Low–Extra"
+              : f.levels.length > 0
+                ? "Low–High"
+                : "Sessão";
         return (
           <button
             type="button"

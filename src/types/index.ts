@@ -90,18 +90,32 @@ export type ClaudeCodeToolName =
   | "Read"
   | "Edit"
   | "Write"
+  | "NotebookEdit"
   | "Glob"
   | "Grep"
+  | "LSP"
   | "Bash"
+  | "PowerShell"
   | "WebFetch"
   | "WebSearch"
-  | "Agent";
+  | "Agent"
+  | "Skill"
+  | "ToolSearch"
+  | "Monitor"
+  | "SendMessage"
+  | "TaskStop"
+  | "TodoWrite";
 
 export type ClaudeCodeModel =
   | "inherit"
   | "sonnet"
   | "opus"
   | "haiku"
+  | "fable"
+  | "claude-sonnet-5-5"
+  | "claude-opus-5-5"
+  | "claude-haiku-5-5"
+  | "claude-fable-5-2"
   | "claude-sonnet-4-6"
   | "claude-opus-4-6"
   | "claude-haiku-4-5";
@@ -122,6 +136,8 @@ export type ClaudeCodePermissionMode =
   | "bypassPermissions"
   | "plan";
 
+export type ClaudeCodeMemoryScope = "none" | "user" | "project" | "local";
+
 export type ClaudeCodeTargetConfig = {
   exposure: "main" | "subagent" | "both";
   model: ClaudeCodeModel;
@@ -130,6 +146,9 @@ export type ClaudeCodeTargetConfig = {
   disallowedTools: ClaudeCodeToolName[];
   permissionMode: ClaudeCodePermissionMode;
   isolation: "none" | "worktree";
+  memory?: ClaudeCodeMemoryScope;
+  maxTurns?: number;
+  omitClaudeMd?: boolean;
   includeClaudeMd: boolean;
   referenceAgentsMd: boolean;
   disableModelInvocationSkills: string[];
@@ -137,6 +156,12 @@ export type ClaudeCodeTargetConfig = {
 
 export type CodexModel =
   | "inherit"
+  | "gpt-6.2-sol"
+  | "gpt-6.2-astra"
+  | "gpt-6.1-sol"
+  | "gpt-6.1-terra"
+  | "gpt-6-astra"
+  | "gpt-6-luna"
   | "gpt-5.4"
   | "gpt-5.4-mini"
   | "gpt-5.3-codex"
@@ -148,7 +173,8 @@ export type CodexReasoningEffort =
   | "medium"
   | "high"
   | "xhigh"
-  | "max";
+  | "max"
+  | "ultra";
 
 export type CodexTargetConfig = {
   exposure: "root" | "subagent" | "both";

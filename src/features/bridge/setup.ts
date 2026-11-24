@@ -26,7 +26,7 @@ export function bridgeSetup({
 }) {
   if (!absolutePath(directory, platform) || !absolutePath(library, platform))
     throw Error(
-      "Informe caminhos absolutos para a pasta do Agex e o arquivo da biblioteca.",
+      "Informe caminhos absolutos para a pasta do Paktro e o arquivo da biblioteca.",
     );
   if (!/^\d+$/.test(port) || Number(port) < 1024 || Number(port) > 65535)
     throw Error("A porta deve estar entre 1024 e 65535.");
@@ -40,7 +40,7 @@ export function bridgeSetup({
     ["bridge", "dist", "cli.mjs"].join(sep);
   const config = {
     mcpServers: {
-      agex: { command: "node", args: [entry, "--file", library] },
+      paktro: { command: "node", args: [entry, "--file", library] },
     },
   };
   const quote = (s: string) => shellQuote(s, platform);
@@ -49,10 +49,10 @@ export function bridgeSetup({
   const generator = `node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))'`;
   const auth =
     platform === "windows"
-      ? `$env:AGEX_BRIDGE_TOKEN = ${generator}\n$env:AGEX_BRIDGE_TOKEN`
-      : `export AGEX_BRIDGE_TOKEN="$(${generator})"\nprintf '%s\\n' "$AGEX_BRIDGE_TOKEN"`;
+      ? `$env:PAKTRO_BRIDGE_TOKEN = ${generator}\n$env:PAKTRO_BRIDGE_TOKEN`
+      : `export PAKTRO_BRIDGE_TOKEN="$(${generator})"\nprintf '%s\\n' "$PAKTRO_BRIDGE_TOKEN"`;
   const start = `node ${quote(entry)} --http --origin ${quote(origin)} --port ${port} --file ${quote(library)}`;
-  const cliCommand = `agy mcp add agex -- node ${quote(entry)} --file ${quote(library)}`;
+  const cliCommand = `agy mcp add paktro -- node ${quote(entry)} --file ${quote(library)}`;
   return {
     config: JSON.stringify(config, null, 2),
     cliCommand,

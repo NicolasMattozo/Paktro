@@ -12,7 +12,7 @@ function resolveSiteUrl(): string {
     : `https://${raw}`;
 }
 
-const siteTitle = "Agex - Construtor visual de agentes de IA";
+const siteTitle = "Paktro - Construtor visual de agentes de IA";
 const siteDescription =
   "Crie, valide, converta e exporte pacotes de agentes, regras, skills e servidores MCP para Google Antigravity, Claude Code, OpenAI Codex e ChatGPT Plugin. Local, gratuito e open source.";
 
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "pt_BR",
-    siteName: "Agex",
+    siteName: "Paktro",
     title: siteTitle,
     description: siteDescription,
     images: [
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Agex - Configure uma vez. Exporte no formato certo.",
+        alt: "Paktro - Configure uma vez. Exporte no formato certo.",
       },
     ],
   },

@@ -25,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { Icon } from "./ui/icon";
-import { AgexMark, PackCube, PackLoader } from "./ui/brand";
+import { PaktroMark, PackCube, PackLoader } from "./ui/brand";
 import AgentEditor from "./editor/agent-editor";
 import FilePreview from "./preview/file-preview";
 import BridgePanel from "./bridge-panel";
@@ -303,7 +303,7 @@ export default function Studio() {
       files: [
         ...adapter.generate(a),
         {
-          path: "agex.json",
+          path: "paktro.json",
           kind: "backup" as const,
           content: serializeBackup([a]),
         },
@@ -802,14 +802,14 @@ export default function Studio() {
           <button
             className="brand"
             onClick={() => navigate("library")}
-            aria-label="Agex, início"
+            aria-label="Paktro, início"
           >
             <span className="brand-mark">
-              <AgexMark size={28} />
+              <PaktroMark size={28} />
             </span>
             <span className="brand-copy">
               <span className="brand-wordmark">
-                ag<span className="brand-accent">ex</span>
+                pak<span className="brand-accent">tro</span>
               </span>
               <span className="brand-sub">MCP · packs</span>
             </span>
@@ -944,7 +944,7 @@ export default function Studio() {
                   try {
                     download(
                       serializeBackup(agents),
-                      "agex-backup.json",
+                      "paktro-backup.json",
                       "application/json",
                     );
                   } catch {
@@ -968,7 +968,7 @@ export default function Studio() {
                   onClick={() =>
                     download(
                       legacyMigration.rawBackup,
-                      "agex-backup-v1-original.json",
+                      "paktro-backup-original.json",
                       "application/json",
                     )
                   }
@@ -1102,7 +1102,7 @@ export default function Studio() {
                           onClick={() =>
                             download(
                               serializeBackup(agents),
-                              "agex-backup.json",
+                              "paktro-backup.json",
                               "application/json",
                             )
                           }
@@ -1355,7 +1355,7 @@ export default function Studio() {
                       <ShieldCheck size={14} strokeWidth={1.65} />
                       Dados salvos localmente neste navegador.
                     </span>
-                    <span>Agex · 2026</span>
+                    <span>Paktro · 2026</span>
                   </footer>
                 </>
               )}
@@ -1669,7 +1669,7 @@ export default function Studio() {
                       <span className="eyebrow purple">
                         DA IDEIA AO PROJETO
                       </span>
-                      <h1>Agex. Multiplataforma com fidelidade real.</h1>
+                      <h1>Paktro. Multiplataforma com fidelidade real.</h1>
                       <p>Cada destino usa seu próprio contrato oficial.</p>
                     </div>
                   </div>
@@ -1724,14 +1724,14 @@ export default function Studio() {
                       </li>
                       <li>
                         Ao exportar direto via Ponte local,{" "}
-                        <code>.agex/manifest.json</code> registra hashes dos
+                        <code>.paktro/manifest.json</code> registra hashes dos
                         arquivos gerenciados para detectar conflitos antes de
                         gravar.
                       </li>
                       <li>
                         <code>AGENTS.md</code> e <code>CLAUDE.md</code> utilizam
                         blocos delimitados{" "}
-                        <code>&lt;!-- AGEX:BEGIN --&gt;</code> ou pedem
+                        <code>&lt;!-- PAKTRO:BEGIN --&gt;</code> ou pedem
                         confirmação explícita.
                       </li>
                       <li>

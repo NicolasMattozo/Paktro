@@ -92,6 +92,23 @@ function ruleOutputHint(
     : "Aviso: plugins ChatGPT não possuem gatilho separado para esta ativação";
 }
 
+function parseTagsInput(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim().slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function parseMcpArgsInput(raw: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((s) => s.slice(0, 300))
+    .filter((s) => s.length > 0)
+    .slice(0, 30);
+}
+
 export default function AgentEditor({
   pack,
   updatePack,
@@ -99,6 +116,17 @@ export default function AgentEditor({
   setStep,
 }: Props) {
   const [toolQuery, setToolQuery] = useState("");
+  const [tagsDraft, setTagsDraft] = useState<{
+    packId: string;
+    committed: string;
+    text: string;
+  } | null>(null);
+  const [ruleGlobsDraft, setRuleGlobsDraft] = useState<
+    Record<string, { committed: string; text: string }>
+  >({});
+  const [mcpArgsDraft, setMcpArgsDraft] = useState<
+    Record<number, { committed: string; text: string }>
+  >({});
   const c = pack.common;
   const target = pack.target;
   const adapter = PLATFORM_ADAPTERS[target];
@@ -395,7 +423,7 @@ export default function AgentEditor({
                   <span>
                     <strong>Gerar/atualizar bloco em CLAUDE.md</strong>
                     <small>
-                      Usa marcadores gerenciados <code>&lt;!-- AGEX:BEGIN --&gt;</code>{" "}
+                      Usa marcadores gerenciados <code>&lt;!-- PAKTRO:BEGIN --&gt;</code>{" "}
                       para nunca sobrescrever instruções existentes sem sua confirmação.
                     </small>
                   </span>
@@ -521,15 +549,24 @@ export default function AgentEditor({
               <label className="field">
                 Etiquetas (separadas por vírgula)
                 <input
-                  value={c.tags.join(", ")}
-                  onChange={(e) =>
-                    updateCommon({
-                      tags: e.target.value
-                        .split(",")
-                        .map((s) => s.trim().slice(0, 32))
-                        .slice(0, 10),
-                    })
+                  value={
+                    tagsDraft &&
+                    tagsDraft.packId === c.id &&
+                    tagsDraft.committed === JSON.stringify(c.tags)
+                      ? tagsDraft.text
+                      : c.tags.join(", ")
                   }
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    const nextTags = parseTagsInput(text);
+                    setTagsDraft({
+                      packId: c.id,
+                      committed: JSON.stringify(nextTags),
+                      text,
+                    });
+                    updateCommon({ tags: nextTags });
+                  }}
+                  onBlur={() => setTagsDraft(null)}
                 />
               </label>
             </details>
@@ -612,7 +649,7 @@ export default function AgentEditor({
                   </p>
                 )}
                 <div className="tool-sources">
-                  <span>Catálogo verificado em 12/11/2026.</span>
+                  <span>Catálogo verificado em 24/11/2026.</span>
                   <a href={TOOL_SOURCES.standard} target="_blank" rel="noopener noreferrer">
                     Ferramentas oficiais <ExternalLink size={11} />
                   </a>
@@ -683,6 +720,13 @@ export default function AgentEditor({
 
                 <fieldset className="tool-group">
                   <legend>Ferramentas permitidas (tools)</legend>
+                  {cc.tools.length === 0 && (
+                    <p className="small muted" style={{ marginTop: 0 }}>
+                      Nenhuma ferramenta marcada: no Claude Code, omitir{" "}
+                      <code>tools</code> faz o subagente herdar todas as ferramentas
+                      da sessão (exceto <code>disallowedTools</code>).
+                    </p>
+                  )}
                   <div className="selection-list">
                     {visibleClaudeTools.map((tool) => {
                       const id = tool.id as ClaudeCodeToolName;
@@ -792,6 +836,75 @@ export default function AgentEditor({
                     </option>
                   </select>
                 </label>
+
+                <details className="advanced">
+                  <summary>Opções avançadas do subagente (Claude Code)</summary>
+                  <label className="field">
+                    Memória persistente (memory)
+                    <select
+                      value={cc.memory ?? ""}
+                      onChange={(e) =>
+                        updateClaudeCode({
+                          memory: e.target.value
+                            ? (e.target.value as NonNullable<
+                                ClaudeCodeTargetConfig["memory"]
+                              >)
+                            : undefined,
+                        })
+                      }
+                    >
+                      <option value="">Desativada (padrão)</option>
+                      <option value="project">
+                        project — compartilhada no projeto (.claude/agent-memory/)
+                      </option>
+                      <option value="local">
+                        local — privada fora do Git (.claude/agent-memory-local/)
+                      </option>
+                      <option value="user">
+                        user — global do usuário (~/.claude/agent-memory/)
+                      </option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    Limite máximo de turnos (maxTurns, opcional)
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      placeholder="Sem limite fixo"
+                      value={cc.maxTurns ?? ""}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        if (!raw) {
+                          updateClaudeCode({ maxTurns: undefined });
+                          return;
+                        }
+                        const parsed = Number.parseInt(raw, 10);
+                        if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 500) {
+                          updateClaudeCode({ maxTurns: parsed });
+                        }
+                      }}
+                    />
+                  </label>
+                  <label className="check-card">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(cc.omitClaudeMd)}
+                      onChange={(e) =>
+                        updateClaudeCode({
+                          omitClaudeMd: e.target.checked || undefined,
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Ignorar CLAUDE.md neste subagente (omitClaudeMd)</strong>
+                      <small>
+                        Economiza contexto quando o subagente só precisa seguir o
+                        próprio prompt.
+                      </small>
+                    </span>
+                  </label>
+                </details>
               </>
             )}
 
@@ -1019,14 +1132,36 @@ export default function AgentEditor({
                         Padrões de arquivos
                         <input
                           placeholder="Ex.: src/**, tests/**"
-                          value={legacyAct.globs}
+                          value={
+                            ruleGlobsDraft[r.id] &&
+                            ruleGlobsDraft[r.id].committed ===
+                              JSON.stringify(r.activation.patterns)
+                              ? ruleGlobsDraft[r.id].text
+                              : legacyAct.globs
+                          }
                           maxLength={500}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const text = e.target.value;
+                            const nextPatterns = parsePatterns(text);
+                            setRuleGlobsDraft((prev) => ({
+                              ...prev,
+                              [r.id]: {
+                                committed: JSON.stringify(nextPatterns),
+                                text,
+                              },
+                            }));
                             patchRule(r.id, {
                               activation: {
                                 type: "path",
-                                patterns: parsePatterns(e.target.value),
+                                patterns: nextPatterns,
                               },
+                            });
+                          }}
+                          onBlur={() =>
+                            setRuleGlobsDraft((prev) => {
+                              const next = { ...prev };
+                              delete next[r.id];
+                              return next;
                             })
                           }
                         />
@@ -1217,7 +1352,7 @@ export default function AgentEditor({
                         ? ".codex/config.toml ([mcp_servers.<id>])"
                         : "mcp.json (type: streamable-http)"}
                 </code>
-                . Credenciais nunca são salvas no backup do Agex.
+                . Credenciais nunca são salvas no backup do Paktro.
               </p>
             </div>
 
@@ -1230,7 +1365,7 @@ export default function AgentEditor({
               </div>
             )}
 
-            <McpHelp />
+            <McpHelp target={target} />
 
             {c.mcpServers.map((m, index) => (
               <div className="item-editor item-body" key={index}>
@@ -1317,13 +1452,30 @@ export default function AgentEditor({
                       <textarea
                         rows={3}
                         placeholder={"Ex.:\n-m\nmeu_servidor_mcp"}
-                        value={m.args.join("\n")}
-                        onChange={(e) =>
-                          patchMcp(index, {
-                            args: e.target.value
-                              .split("\n")
-                              .slice(0, 30)
-                              .map((s) => s.slice(0, 300)),
+                        value={
+                          mcpArgsDraft[index] &&
+                          mcpArgsDraft[index].committed ===
+                            JSON.stringify(m.args)
+                            ? mcpArgsDraft[index].text
+                            : m.args.join("\n")
+                        }
+                        onChange={(e) => {
+                          const text = e.target.value;
+                          const nextArgs = parseMcpArgsInput(text);
+                          setMcpArgsDraft((prev) => ({
+                            ...prev,
+                            [index]: {
+                              committed: JSON.stringify(nextArgs),
+                              text,
+                            },
+                          }));
+                          patchMcp(index, { args: nextArgs });
+                        }}
+                        onBlur={() =>
+                          setMcpArgsDraft((prev) => {
+                            const next = { ...prev };
+                            delete next[index];
+                            return next;
                           })
                         }
                       />
@@ -1370,7 +1522,7 @@ export default function AgentEditor({
               Adicionar servidor MCP
             </button>
             <p className="muted small">
-              A ponte local do Agex (Agex Bridge) é uma integração separada.
+              A ponte local do Paktro (Paktro Bridge) é uma integração separada.
               Acesse “Ponte local” no menu para conectar sua IA e sincronizar
               seus conjuntos com ela.
             </p>

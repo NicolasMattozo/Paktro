@@ -19,7 +19,7 @@ export type ExportFileResult = {
   action: "created" | "updated" | "merged" | "unchanged";
 };
 
-export type AgexManifestEntry = {
+export type PaktroManifestEntry = {
   packId: string;
   target: TargetPlatform;
   mappingVersion: string;
@@ -33,13 +33,14 @@ export type AgexManifestEntry = {
   >;
 };
 
-export type AgexManifestV1 = {
-  format: "agex-manifest";
+export type PaktroManifestV1 = {
+  format: "paktro-manifest";
   version: 1;
-  packs: Record<string, AgexManifestEntry>;
+  packs: Record<string, PaktroManifestEntry>;
 };
 
-const MANIFEST_REL_PATH = ".agex/manifest.json";
+const MANIFEST_REL_PATH = ".paktro/manifest.json";
+const LEGACY_MANIFEST_REL_PATH = ".agex/manifest.json";
 
 export function sha256Text(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -95,23 +96,35 @@ async function readOptionalUtf8(absPath: string): Promise<string | null> {
   }
 }
 
-async function readManifest(projectDir: string): Promise<AgexManifestV1> {
+async function readManifest(projectDir: string): Promise<PaktroManifestV1> {
   const abs = await assertNoSymlinkChain(projectDir, MANIFEST_REL_PATH);
-  const raw = await readOptionalUtf8(abs);
+  let raw = await readOptionalUtf8(abs);
   if (!raw) {
-    return { format: "agex-manifest", version: 1, packs: {} };
+    const legacyAbs = await assertNoSymlinkChain(
+      projectDir,
+      LEGACY_MANIFEST_REL_PATH,
+    );
+    raw = await readOptionalUtf8(legacyAbs);
+  }
+  if (!raw) {
+    return { format: "paktro-manifest", version: 1, packs: {} };
   }
   try {
-    const parsed = JSON.parse(raw) as Partial<AgexManifestV1>;
+    const parsed = JSON.parse(raw) as {
+      format?: string;
+      version?: number;
+      packs?: Record<string, PaktroManifestEntry>;
+    };
     if (
       parsed &&
-      parsed.format === "agex-manifest" &&
+      (parsed.format === "paktro-manifest" ||
+        parsed.format === "agex-manifest") &&
       parsed.version === 1 &&
       parsed.packs &&
       typeof parsed.packs === "object"
     ) {
       return {
-        format: "agex-manifest",
+        format: "paktro-manifest",
         version: 1,
         packs: parsed.packs,
       };
@@ -119,22 +132,25 @@ async function readManifest(projectDir: string): Promise<AgexManifestV1> {
   } catch {
     // Corrupted manifest should not allow blind overwrites
     throw new Error(
-      "O manifesto .agex/manifest.json existente está corrompido; revise antes de exportar.",
+      "O manifesto .paktro/manifest.json existente está corrompido; revise antes de exportar.",
     );
   }
-  return { format: "agex-manifest", version: 1, packs: {} };
+  return { format: "paktro-manifest", version: 1, packs: {} };
 }
 
 function managedBlockMarkers(packId: string) {
   return {
-    begin: `<!-- AGEX:BEGIN pack=${packId} -->`,
-    end: `<!-- AGEX:END pack=${packId} -->`,
+    begin: `<!-- PAKTRO:BEGIN pack=${packId} -->`,
+    end: `<!-- PAKTRO:END pack=${packId} -->`,
+    legacyBegin: `<!-- AGEX:BEGIN pack=${packId} -->`,
+    legacyEnd: `<!-- AGEX:END pack=${packId} -->`,
   };
 }
 
 function wrapManagedBlock(packId: string, body: string): string {
   const { begin, end } = managedBlockMarkers(packId);
   const safeBody = body
+    .replace(/<!--\s*PAKTRO:(BEGIN|END)/gi, "<!-- paktro-escaped:$1")
     .replace(/<!--\s*AGEX:(BEGIN|END)/gi, "<!-- agex-escaped:$1")
     .trimEnd();
   return `${begin}\n${safeBody}\n${end}\n`;
@@ -146,16 +162,20 @@ function mergeManagedMarkdown(
   body: string,
   resolution: ConflictResolution,
 ): { content?: string; conflict?: ExportConflict } {
-  const { begin, end } = managedBlockMarkers(packId);
+  const { begin, end, legacyBegin, legacyEnd } = managedBlockMarkers(packId);
   const wrapped = wrapManagedBlock(packId, body);
-  const startIdx = existingText.indexOf(begin);
-  const endIdx = existingText.indexOf(end);
-
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const before = existingText.slice(0, startIdx);
-    const after = existingText.slice(endIdx + end.length).replace(/^\n/, "");
-    const next = `${before}${wrapped.trimEnd()}${after ? `\n${after}` : "\n"}`;
-    return { content: next };
+  for (const [b, e] of [
+    [begin, end],
+    [legacyBegin, legacyEnd],
+  ] as const) {
+    const startIdx = existingText.indexOf(b);
+    const endIdx = existingText.indexOf(e);
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      const before = existingText.slice(0, startIdx);
+      const after = existingText.slice(endIdx + e.length).replace(/^\n/, "");
+      const next = `${before}${wrapped.trimEnd()}${after ? `\n${after}` : "\n"}`;
+      return { content: next };
+    }
   }
 
   if (resolution === "append-managed") {
@@ -171,7 +191,7 @@ function mergeManagedMarkdown(
     conflict: {
       path: "",
       reason:
-        "Arquivo Markdown existente sem bloco gerenciado Agex. Confirme para anexar o bloco gerenciado ou sobrescrever.",
+        "Arquivo Markdown existente sem bloco gerenciado Paktro. Confirme para anexar o bloco gerenciado ou sobrescrever.",
       canAppendManaged: true,
     },
   };
@@ -216,8 +236,13 @@ function mergeJsonMcp(existingText: string, incomingText: string): {
       ? sanitizeRecord(incomingObj.mcpServers as Record<string, unknown>)
       : {};
 
+  const cleanExisting = sanitizeRecord(existingObj);
+  const cleanIncoming = sanitizeRecord(incomingObj);
   const merged = {
-    ...sanitizeRecord(existingObj),
+    ...(typeof cleanIncoming.$schema === "string" && !cleanExisting.$schema
+      ? { $schema: cleanIncoming.$schema }
+      : {}),
+    ...cleanExisting,
     mcpServers: {
       ...existingServers,
       ...incomingServers,
@@ -449,8 +474,8 @@ export async function exportPackSafely(options: {
         conflicts.push({
           path: f.path,
           reason: recordedSha
-            ? "Arquivo foi editado manualmente fora do Agex desde a última exportação."
-            : "Arquivo já existe no projeto e não foi criado por este pacote Agex.",
+            ? "Arquivo foi editado manualmente fora do Paktro desde a última exportação."
+            : "Arquivo já existe no projeto e não foi criado por este pacote Paktro.",
         });
       }
     }
@@ -484,7 +509,7 @@ export async function exportPackSafely(options: {
   // Execute safe writes
   const results: ExportFileResult[] = [];
   const skipped: string[] = [];
-  const nextManifestFiles: AgexManifestEntry["files"] = {};
+  const nextManifestFiles: PaktroManifestEntry["files"] = {};
 
   for (const w of plannedWrites) {
     if (w.action !== "unchanged") {

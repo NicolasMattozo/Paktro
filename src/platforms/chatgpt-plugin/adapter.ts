@@ -13,6 +13,11 @@ import { assertSafeRelativePath, SLUG_REGEX, slugify } from "../common/paths";
 import { parseSkillMarkdown, renderSkillMarkdown } from "../common/skills";
 import { MAPPING_VERSIONS, type MergePolicy, type PlatformAdapter } from "../types";
 
+export const AGENT_PLUGINS_MANIFEST_SCHEMA =
+  "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+export const AGENT_PLUGINS_MCP_SCHEMA =
+  "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
+
 function effectiveConfig(pack: AgentPackV2): ChatGptPluginTargetConfig {
   return pack.targets.chatgptPlugin ?? defaultChatGptPluginTarget();
 }
@@ -36,22 +41,23 @@ function buildChatGptSetupGuide(pack: AgentPackV2): string {
     (m) => m.enabled && m.transport === "http",
   );
   const lines = [
-    `# Plugin / Skill para ChatGPT — ${pack.common.name}`,
+    `# Plugin / Skill portátil (ChatGPT & Codex) — ${pack.common.name}`,
     "",
     "## Arquivos do pacote",
     "",
-    "- `plugin.json` — manifesto compatível com o padrão `agent-plugins.org` (`1.0.0`)",
-    `- \`skills/${pack.common.slug}/SKILL.md\` — skill principal com especialidade, objetivo e diretrizes`,
+    "- `plugin.json` — manifesto estrito no padrão `agent-plugins.org` (`1.0.0`, sem chaves legadas fora do schema)",
+    `- \`skills/${pack.common.slug}/SKILL.md\` — skill principal descoberta automaticamente na raiz \`skills/\``,
     "- `skills/<skill>/SKILL.md` — skills adicionais ativas",
     hasHttpMcp
-      ? "- `mcp.json` — conexões remotas `streamable-http` declaradas para o plugin"
+      ? "- `mcp.json` — conexões remotas `streamable-http` validadas com `mcp.schema.json` (`1.0.0`)"
       : "- Sem `mcp.json` (nenhum servidor MCP HTTP remoto ativo)",
     "",
     "## Limitações de ambiente (ChatGPT Web)",
     "",
-    "- Servidores MCP `stdio` locais não são portáveis para a interface web do ChatGPT; exponha via `streamable-http` com HTTPS e autenticação OAuth/cabeçalhos fora deste pacote.",
+    "- Na especificação portátil `agent-plugins.org` 1.0.0, `skills/` e `mcp.json` são descobertos por convenção de caminho fixo na raiz do plugin (`plugin.json` possui `additionalProperties: false`).",
+    "- Servidores MCP `stdio` locais não são portáveis para a interface web do ChatGPT; exponha via `streamable-http` com HTTPS e declare autenticação (`extensions[\"com.openai\"].auth`) fora deste pacote.",
     "- Papéis locais de IDE (`mainAgent`/`subagent`) e seletores de modelo locais não se aplicam ao formato portátil de plugin.",
-    "- Credenciais nunca são gravadas no `agex.json` ou no `mcp.json`.",
+    "- Credenciais nunca são gravadas no `paktro.json` ou no `mcp.json`.",
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -61,13 +67,13 @@ export const chatGptPluginAdapter: PlatformAdapter = {
   mappingVersion: MAPPING_VERSIONS["chatgpt-plugin"],
   catalog: {
     id: "chatgpt-plugin",
-    name: "ChatGPT (Skill / Plugin portátil)",
+    name: "ChatGPT / Codex (Plugin portátil)",
     shortName: "ChatGPT Plugin",
     vendorGroup: "openai",
     summary:
-      "Pacote portátil com plugin.json, skills/*/SKILL.md e mcp.json (streamable-http).",
-    docsUrl: "https://developers.openai.com/api/docs/mcp",
-    docsVerifiedAt: "2026-11-13",
+      "Pacote portátil Agent Plugins 1.0.0 com plugin.json, skills/*/SKILL.md e mcp.json (streamable-http).",
+    docsUrl: "https://developers.openai.com/plugins/build/plugins",
+    docsVerifiedAt: "2026-11-24",
     mappingVersion: MAPPING_VERSIONS["chatgpt-plugin"],
     supportsRoles: false,
     supportsModels: false,
@@ -75,7 +81,7 @@ export const chatGptPluginAdapter: PlatformAdapter = {
     tools: [],
     permissionModes: [],
     toolNotes:
-      "Plugins portáteis do ChatGPT empacotam instruções em skills/<nome>/SKILL.md e conectores remotos apenas em streamable-http (HTTPS).",
+      "Plugins portáteis do ChatGPT/Codex (agent-plugins.org 1.0.0) descobrem skills/<nome>/SKILL.md e mcp.json na raiz do pacote, aceitando conectores remotos em streamable-http (HTTPS).",
   },
   validate(pack: AgentPackV2) {
     const base = validatePackSchema(pack);
@@ -139,16 +145,14 @@ export const chatGptPluginAdapter: PlatformAdapter = {
       (m) => m.enabled && m.transport === "http",
     );
 
+    // Agent Plugins 1.0.0 manifest has additionalProperties: false;
+    // skills/ and mcp.json are discovered by fixed root paths, not manifest keys.
     const manifest: Record<string, unknown> = {
-      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      $schema: AGENT_PLUGINS_MANIFEST_SCHEMA,
       name: pack.common.slug,
       version: cfg.version || "1.0.0",
       description: pack.common.description,
-      skills: "./skills/",
     };
-    if (enabledHttpMcp.length > 0) {
-      manifest.mcpServers = "./mcp.json";
-    }
     assertSafeRelativePath("plugin.json");
     files.push({
       path: "plugin.json",
@@ -196,12 +200,19 @@ export const chatGptPluginAdapter: PlatformAdapter = {
       files.push({
         path: "mcp.json",
         kind: "mcp",
-        content: `${JSON.stringify({ mcpServers }, null, 2)}\n`,
+        content: `${JSON.stringify(
+          {
+            $schema: AGENT_PLUGINS_MCP_SCHEMA,
+            mcpServers,
+          },
+          null,
+          2,
+        )}\n`,
       });
     }
 
     files.push({
-      path: "AGEX-SETUP.md",
+      path: "PAKTRO-SETUP.md",
       kind: "guide",
       content: buildChatGptSetupGuide(pack),
     });
@@ -209,7 +220,9 @@ export const chatGptPluginAdapter: PlatformAdapter = {
     return files;
   },
   importFiles(files) {
-    const manifestFile = files.find((f) => f.path === "plugin.json");
+    const manifestFile =
+      files.find((f) => f.path === "plugin.json") ??
+      files.find((f) => f.path === ".codex-plugin/plugin.json");
     const rootSkillFiles = files.filter((f) =>
       /^skills\/[^/]+\/SKILL\.md$/.test(f.path),
     );
@@ -247,7 +260,9 @@ export const chatGptPluginAdapter: PlatformAdapter = {
       : skills;
 
     const mcpServers: CommonMcpServer[] = [];
-    const mcpFile = files.find((f) => f.path === "mcp.json");
+    const mcpFile =
+      files.find((f) => f.path === "mcp.json") ??
+      files.find((f) => f.path === ".mcp.json");
     if (mcpFile) {
       const parsed = JSON.parse(mcpFile.content) as {
         mcpServers?: Record<string, Record<string, unknown>>;
@@ -262,9 +277,9 @@ export const chatGptPluginAdapter: PlatformAdapter = {
         ) {
           continue;
         }
-        if (cfg.env || cfg.headers) {
+        if (cfg.env || cfg.headers || cfg.extensions) {
           warnings.push(
-            `Credenciais/cabeçalhos em "${id}" (mcp.json) foram ignorados por segurança.`,
+            `Credenciais/cabeçalhos/auth em "${id}" (${mcpFile.path}) foram ignorados por segurança.`,
           );
         }
         if (typeof cfg.url === "string") {
@@ -341,4 +356,3 @@ export const chatGptPluginAdapter: PlatformAdapter = {
     };
   },
 };
-

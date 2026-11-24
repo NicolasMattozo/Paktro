@@ -96,11 +96,14 @@ describe("ponte local", () => {
       const catalog = JSON.parse(
         (catalogRes.content as { text: string }[])[0].text,
       );
+      expect(catalog.validModelIds).toContain("gemini-4-neon-xhigh");
       expect(catalog.validModelIds).toContain("gemini-4-hydrogen-xhigh");
+      expect(catalog.validModelIds).toContain("gemini-4-carbon-high");
       expect(catalog.validModelIds).toContain("claude-opus-5-5-high");
       expect(catalog.validModelIds).toContain("claude-sonnet-5-5-medium");
       expect(catalog.validModelIds).toContain("gemini-3.8-flash-high");
-      expect(catalog.validModelIds).toContain("gemini-pro-orchestrator-g1-pro");
+      expect(catalog.validModelIds).toContain("gemini-pro-orchestrator-neon");
+      expect(catalog.validModelIds).toContain("flash_lite");
       expect(catalog.toolNotes).toContain("call_mcp_tool");
       const list = await client.callTool({ name: "list_packs", arguments: {} });
       expect(
@@ -118,7 +121,7 @@ describe("ponte local", () => {
       );
       expect(
         parsedPack.files.some(
-          (f: { path: string }) => f.path === "AGEX-SETUP.md",
+          (f: { path: string }) => f.path === "PAKTRO-SETUP.md",
         ),
       ).toBe(true);
       const validation = await client.callTool({
@@ -127,6 +130,15 @@ describe("ponte local", () => {
       });
       expect(
         JSON.parse((validation.content as { text: string }[])[0].text).valid,
+      ).toBe(true);
+      const crossTargetValidation = await client.callTool({
+        name: "validate_pack",
+        arguments: { id: a.id, target: "claude-code" },
+      });
+      expect(
+        JSON.parse(
+          (crossTargetValidation.content as { text: string }[])[0].text,
+        ).valid,
       ).toBe(true);
       expect(await readFile(file, "utf8")).toBe(before);
     } finally {
@@ -316,7 +328,7 @@ describe("ponte local", () => {
       expect(agentMd).toContain("Revisor Go");
 
       const setupGuide = await readFile(
-        join(projectDir, "AGEX-SETUP.md"),
+        join(projectDir, "PAKTRO-SETUP.md"),
         "utf8",
       );
       expect(setupGuide).toContain("gemini-4-hydrogen-high");

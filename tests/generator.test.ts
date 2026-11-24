@@ -159,12 +159,12 @@ describe("gerador Antigravity", () => {
     const blob = await createZip(a);
     const zip = await JSZip.loadAsync(await blob.arrayBuffer());
     expect(Object.keys(zip.files).sort()).toEqual(
-      [...generateFiles(a).map((f) => f.path), "agex.json"].sort(),
+      [...generateFiles(a).map((f) => f.path), "paktro.json"].sort(),
     );
     for (const f of generateFiles(a))
       expect(await zip.file(f.path)!.async("string")).toBe(f.content);
     expect(
-      parseBackup(await zip.file("agex.json")!.async("string")).agents,
+      parseBackup(await zip.file("paktro.json")!.async("string")).agents,
     ).toEqual([migrateV1ToV2(a)]);
   });
 });
@@ -229,29 +229,43 @@ describe("catálogo ampliado de ferramentas", () => {
 });
 
 describe("modelos de sessão (Gemini, Orchestrator e Claude), universalidade e ponte", () => {
-  it("exporta inherit no YAML e gera AGEX-SETUP.md para modelos de sessão (sem GPT)", async () => {
+  it("exporta inherit no YAML e gera PAKTRO-SETUP.md para modelos de sessão (sem GPT)", async () => {
     const { MODEL_IDS, isSessionModel, modelLabel, sessionCommand } =
       await import("../src/templates/models");
+    expect(MODEL_IDS).toContain("flash_lite");
+    expect(MODEL_IDS).toContain("gemini-4-neon-xhigh");
     expect(MODEL_IDS).toContain("gemini-4-hydrogen-xhigh");
+    expect(MODEL_IDS).toContain("gemini-4-carbon-high");
     expect(MODEL_IDS).toContain("gemini-4-argon-high");
     expect(MODEL_IDS).toContain("gemini-3.8-flash-high");
-    expect(MODEL_IDS).toContain("gemini-pro-orchestrator-g1-pro");
+    expect(MODEL_IDS).toContain("gemini-pro-orchestrator-neon");
+    expect(MODEL_IDS).toContain("gemini-pro-orchestrator");
+    expect(MODEL_IDS).toContain("gemini-pro-orchestrator-argon");
     expect(MODEL_IDS).toContain("claude-opus-5-5-high");
     expect(MODEL_IDS).toContain("claude-sonnet-5-5-medium");
     expect(MODEL_IDS.some((id) => id.includes("gpt"))).toBe(false);
 
     for (const model of [
+      "gemini-4-neon-low",
+      "gemini-4-neon-medium",
+      "gemini-4-neon-high",
+      "gemini-4-neon-xhigh",
       "gemini-4-hydrogen-low",
       "gemini-4-hydrogen-medium",
       "gemini-4-hydrogen-high",
       "gemini-4-hydrogen-xhigh",
+      "gemini-4-carbon-low",
+      "gemini-4-carbon-medium",
+      "gemini-4-carbon-high",
       "gemini-4-argon-low",
       "gemini-4-argon-medium",
       "gemini-4-argon-high",
       "gemini-3.8-flash-low",
       "gemini-3.8-flash-medium",
       "gemini-3.8-flash-high",
-      "gemini-pro-orchestrator-g1-pro",
+      "gemini-pro-orchestrator-neon",
+      "gemini-pro-orchestrator",
+      "gemini-pro-orchestrator-argon",
       "claude-opus-5-5-low",
       "claude-opus-5-5-medium",
       "claude-opus-5-5-high",
@@ -264,30 +278,42 @@ describe("modelos de sessão (Gemini, Orchestrator e Claude), universalidade e p
       a.model = model;
       const files = generateFiles(a);
       expect(metadata(files[0].content).model).toBe("inherit");
-      const setup = files.find((f) => f.path === "AGEX-SETUP.md");
+      const setup = files.find((f) => f.path === "PAKTRO-SETUP.md");
       expect(setup).toBeTruthy();
       expect(setup!.content).toContain(modelLabel(model));
       expect(setup!.content).toContain(sessionCommand(a.slug, model, true));
 
       const zip = await JSZip.loadAsync(await (await createZip(a)).arrayBuffer());
-      expect(await zip.file("AGEX-SETUP.md")!.async("string")).toBe(
+      expect(await zip.file("PAKTRO-SETUP.md")!.async("string")).toBe(
         setup!.content,
       );
       expect(
-        parseBackup(await zip.file("agex.json")!.async("string"))
+        parseBackup(await zip.file("paktro.json")!.async("string"))
           .agents[0].targets.antigravity?.model,
       ).toBe(model);
     }
 
-    for (const tier of ["inherit", "flash", "pro"] as const) {
+    for (const tier of ["inherit", "flash_lite", "flash", "pro"] as const) {
       const a = createAgent("generic");
       a.model = tier;
       const files = generateFiles(a);
       expect(metadata(files[0].content).model).toBe(tier);
       expect(
-        files.some((f) => f.path === "AGEX-SETUP.md"),
+        files.some((f) => f.path === "PAKTRO-SETUP.md"),
       ).toBe(false);
     }
+
+    // Legacy orchestrator slug migrates transparently to gemini-pro-orchestrator-argon
+    const legacyOrch = {
+      ...createAgent("generic"),
+      model: "gemini-pro-orchestrator-g1-pro",
+    };
+    const migrated = parseBackup(
+      JSON.stringify({ format: "agex", version: 1, agents: [legacyOrch] }),
+    );
+    expect(migrated.agents[0].targets.antigravity?.model).toBe(
+      "gemini-pro-orchestrator-argon",
+    );
   });
 
   it("mantém templates, regras e skills universais para qualquer linguagem", () => {
@@ -311,31 +337,31 @@ describe("modelos de sessão (Gemini, Orchestrator e Claude), universalidade e p
     expect(absolutePath("C:\\projetos\\studio", "windows")).toBe(true);
 
     const posix = bridgeSetup({
-      directory: "/home/user/agex",
-      library: "/home/user/agex.json",
+      directory: "/home/user/paktro",
+      library: "/home/user/paktro.json",
       platform: "posix",
       origin: "http://localhost:3000",
       port: "4319",
     });
-    expect(JSON.parse(posix.config).mcpServers.agex).toEqual({
+    expect(JSON.parse(posix.config).mcpServers.paktro).toEqual({
       command: "node",
       args: [
-        "/home/user/agex/bridge/dist/cli.mjs",
+        "/home/user/paktro/bridge/dist/cli.mjs",
         "--file",
-        "/home/user/agex.json",
+        "/home/user/paktro.json",
       ],
     });
-    expect(posix.cliCommand).toContain("agy mcp add agex -- node");
+    expect(posix.cliCommand).toContain("agy mcp add paktro -- node");
 
     const win = bridgeSetup({
-      directory: "C:\\projetos\\agex\\",
-      library: "C:\\Users\\dev\\agex.json",
+      directory: "C:\\projetos\\paktro\\",
+      library: "C:\\Users\\dev\\paktro.json",
       platform: "windows",
       origin: "http://localhost:3000",
       port: "4319",
     });
-    expect(JSON.parse(win.config).mcpServers.agex.args[0]).toBe(
-      "C:\\projetos\\agex\\bridge\\dist\\cli.mjs",
+    expect(JSON.parse(win.config).mcpServers.paktro.args[0]).toBe(
+      "C:\\projetos\\paktro\\bridge\\dist\\cli.mjs",
     );
     expect(win.install).toContain("Set-Location -LiteralPath");
   });

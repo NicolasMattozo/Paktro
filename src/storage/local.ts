@@ -7,18 +7,19 @@ import { backupSchema } from "../schemas/config";
 import { backupV2Schema } from "../schemas/pack";
 import type { AgentConfig, AgentPackV2 } from "../types";
 
-export const STORAGE_KEY = "agex:library:v2";
+export const STORAGE_KEY = "paktro:library:v2";
 export const LEGACY_STORAGE_KEYS = [
+  "agex:library:v2",
   "agex:library:v1",
   "agent-studio:library:v1",
 ] as const;
-export const LEGACY_STORAGE_KEY = LEGACY_STORAGE_KEYS[1];
+export const LEGACY_STORAGE_KEY = "agent-studio:library:v1";
 export const MAX_IMPORT_BYTES = 1024 * 1024;
 
 export function serializeBackup(agents: (AgentPackV2 | AgentConfig)[]): string {
   const v2Agents = agents.map(ensureAgentPackV2);
   const payload = backupV2Schema.parse({
-    format: "agex",
+    format: "paktro",
     version: 2,
     agents: v2Agents,
   });
@@ -26,7 +27,7 @@ export function serializeBackup(agents: (AgentPackV2 | AgentConfig)[]): string {
 }
 
 export type ParsedBackup = {
-  format: "agex";
+  format: "paktro";
   version: 2;
   agents: AgentPackV2[];
   migratedFromVersion?: 1;
@@ -50,19 +51,24 @@ export function parseBackup(raw: string): ParsedBackup {
 
   try {
     if (version === 2) {
-      return backupV2Schema.parse(parsed);
+      const v2 = backupV2Schema.parse(parsed);
+      return {
+        format: "paktro",
+        version: 2,
+        agents: v2.agents,
+      };
     }
     if (version === 1) {
       const legacy = backupSchema.parse(parsed);
       return {
-        format: "agex",
+        format: "paktro",
         version: 2,
         agents: legacy.agents.map(migrateV1ToV2),
         migratedFromVersion: 1,
       };
     }
     throw new Error(
-      "Formato de backup não suportado. Use um arquivo exportado pelo Agex (v1 ou v2).",
+      "Formato de backup não suportado. Use um arquivo exportado pelo Paktro (v1 ou v2).",
     );
   } catch (e) {
     if (e instanceof ZodError) {

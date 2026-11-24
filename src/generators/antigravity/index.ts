@@ -6,7 +6,7 @@ import {
 import { stringify } from "yaml";
 import { configSchema } from "../../schemas/config";
 import type { AgentConfig, GeneratedFile } from "../../types";
-export const MAPPING_VERSION = "antigravity-2026-11-12";
+export const MAPPING_VERSION = "antigravity-2026-11-24";
 const markdown = (metadata: object, body: string) =>
   `---\n${stringify(metadata, { lineWidth: 0 })}---\n\n${body.trim()}\n`;
 export function generateFiles(input: AgentConfig): GeneratedFile[] {
@@ -58,7 +58,7 @@ export function generateFiles(input: AgentConfig): GeneratedFile[] {
       content: markdown(
         {
           trigger: r.trigger,
-          description: r.description,
+          ...(r.description.trim() ? { description: r.description } : {}),
           ...(r.trigger === "glob" ? { globs: r.globs } : {}),
         },
         `# ${r.name}\n\n${r.content}`,
@@ -86,7 +86,7 @@ export function generateFiles(input: AgentConfig): GeneratedFile[] {
               servers.map((s) => [
                 s.id,
                 s.transport === "stdio"
-                  ? { command: s.command, args: s.args }
+                  ? { command: s.command, args: s.args.filter((x) => x.length > 0) }
                   : { serverUrl: s.serverUrl },
               ]),
             ),
@@ -97,7 +97,7 @@ export function generateFiles(input: AgentConfig): GeneratedFile[] {
     });
   if (isSessionModel(a.model))
     files.push({
-      path: "AGEX-SETUP.md",
+      path: "PAKTRO-SETUP.md",
       kind: "guide",
       content: modelSetupGuide(a),
     });

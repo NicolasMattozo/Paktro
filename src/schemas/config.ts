@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MODEL_IDS } from "../templates/models";
+import { MODEL_IDS, normalizeAntigravityModelId } from "../templates/models";
 import { TOOL_NAMES } from "../templates/tools";
 export { TOOL_NAMES } from "../templates/tools";
 export const slugSchema = z
@@ -50,7 +50,13 @@ export const draftSchema = z
     specialty: z.string().max(300),
     goal: z.string().max(2000),
     instructions: text,
-    model: z.enum(MODEL_IDS),
+    model: z.preprocess(
+      (val) =>
+        typeof val === "string"
+          ? (normalizeAntigravityModelId(val) ?? val)
+          : val,
+      z.enum(MODEL_IDS),
+    ),
     mainAgent: z.boolean(),
     subagent: z.boolean(),
     tools: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length),
@@ -97,8 +103,11 @@ export const configSchema = draftSchema.superRefine((v, ctx) => {
     if (!r.enabled) return;
     if (!r.content.trim())
       issue(["rules", i, "content"], "Preencha as instruções da regra.");
-    if (!r.description.trim())
-      issue(["rules", i, "description"], "Preencha a descrição da regra.");
+    if (r.trigger === "model_decision" && !r.description.trim())
+      issue(
+        ["rules", i, "description"],
+        "Preencha a descrição da regra quando a ativação for por decisão do modelo.",
+      );
     if (r.trigger === "glob" && !r.globs.trim())
       issue(["rules", i, "globs"], "Informe os padrões de arquivos da regra.");
   });
@@ -130,7 +139,7 @@ export const configSchema = draftSchema.superRefine((v, ctx) => {
 });
 export const backupSchema = z
   .object({
-    format: z.enum(["agex", "agent-studio"]),
+    format: z.enum(["paktro", "agex", "agent-studio"]),
     version: z.literal(1),
     agents: z.array(draftSchema).max(100),
   })
@@ -177,6 +186,14 @@ export function warnings(config: AgentConfig): string[] {
   if (config.tools.includes("call_mcp_tool"))
     result.push(
       "call_mcp_tool é injetada automaticamente pelo Antigravity quando há servidores MCP configurados; listá-la em tools no arquivo .md pode falhar no CLI (agy --agent).",
+    );
+  if (
+    config.model.startsWith("gemini-4-argon-") ||
+    config.model.startsWith("gemini-3.8-flash-") ||
+    config.model === "gemini-pro-orchestrator-argon"
+  )
+    result.push(
+      "A documentação oficial do Antigravity informa que Gemini 4 Argon e Gemini 3.8 Flash serão descontinuados em 30/11/2026. Prefira Gemini 4 Neon, Carbon ou Hydrogen.",
     );
   const enabled = config.rules.filter((r) => r.enabled);
   if (new Set(enabled.map((r) => r.content.trim())).size < enabled.length)

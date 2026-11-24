@@ -12,12 +12,12 @@ import CodeSnippet from "./ui/code-snippet";
 
 const EXAMPLE_MCP_CONFIG = `{
   "mcpServers": {
-    "agex": {
+    "paktro": {
       "command": "node",
       "args": [
-        "/caminho/agex/bridge/dist/cli.mjs",
+        "/caminho/paktro/bridge/dist/cli.mjs",
         "--file",
-        "/caminho/agex.json"
+        "/caminho/paktro.json"
       ]
     }
   }
@@ -44,17 +44,17 @@ export default function BridgeSetup({
       error = (e as Error).message;
     }
   } else if (directory && !absolutePath(directory, platform)) {
-    error = "Informe um caminho absoluto para a pasta do Agex.";
+    error = "Informe um caminho absoluto para a pasta do Paktro.";
   } else if (library && !absolutePath(library, platform)) {
     error = "Informe um caminho absoluto para o arquivo da biblioteca JSON.";
   }
   return (
     <section className="bridge-card bridge-walkthrough">
-      <h2>Conectar IA (MCP) ao Agex no navegador</h2>
+      <h2>Conectar IA (MCP) ao Paktro no navegador</h2>
       <p>
-        A ponte conecta seu Antigravity diretamente ao site Agex: você pede para
-        a IA criar agentes no Agex, confere e ajusta tudo por aqui, clica em{" "}
-        <strong>Dar OK (aprovar para exportar)</strong> e a IA grava os
+        A ponte conecta seu Antigravity diretamente ao site Paktro: você pede
+        para a IA criar agentes no Paktro, confere e ajusta tudo por aqui, clica
+        em <strong>Dar OK (aprovar para exportar)</strong> e a IA grava os
         arquivos direto no seu projeto. Funciona para projetos de qualquer
         linguagem.{" "}
         <strong>Node.js 22+ é necessário apenas para executar a ponte</strong>,
@@ -65,7 +65,7 @@ export default function BridgeSetup({
         <span aria-hidden="true">↔</span>
         <span>Ponte local + Biblioteca JSON</span>
         <span aria-hidden="true">↔</span>
-        <span>Revisão e OK no Agex</span>
+        <span>Revisão e OK no Paktro</span>
         <span aria-hidden="true">→</span>
         <span>Exportação direta no projeto</span>
       </div>
@@ -81,14 +81,14 @@ export default function BridgeSetup({
           </select>
         </label>
         <label className="field">
-          Pasta do Agex no seu computador
+          Pasta do Paktro no seu computador
           <input
             value={directory}
             onChange={(e) => setDirectory(e.target.value)}
             placeholder={
               platform === "windows"
-                ? "C:\\projetos\\agex"
-                : "/home/seu-usuario/agex"
+                ? "C:\\projetos\\paktro"
+                : "/home/seu-usuario/paktro"
             }
           />
           <small>
@@ -103,8 +103,8 @@ export default function BridgeSetup({
             onChange={(e) => setLibrary(e.target.value)}
             placeholder={
               platform === "windows"
-                ? "C:\\Users\\voce\\.agex\\library.json"
-                : "/home/seu-usuario/.agex/library.json"
+                ? "C:\\Users\\voce\\.paktro\\library.json"
+                : "/home/seu-usuario/.paktro/library.json"
             }
           />
           <small>
@@ -129,7 +129,7 @@ export default function BridgeSetup({
         <li>
           <h3>Instale e compile a ponte</h3>
           <p>
-            Tenha o código do Agex neste computador e o Node.js 22 ou superior
+            Tenha o código do Paktro neste computador e o Node.js 22 ou superior
             instalado. Abra o terminal escolhido na pasta informada e execute:
           </p>
           {setup ? (
@@ -159,8 +159,8 @@ export default function BridgeSetup({
           </p>
           <p>
             Se o arquivo já existir, adicione somente a entrada{" "}
-            <code>agex</code> dentro de <code>mcpServers</code>, preservando os
-            outros servidores.
+            <code>paktro</code> dentro de <code>mcpServers</code>, preservando
+            os outros servidores.
           </p>
           {setup ? (
             <>
@@ -200,6 +200,25 @@ export default function BridgeSetup({
             <code>list_packs</code>, <code>validate_pack</code>,{" "}
             <code>get_pack</code> e <code>export_pack_to_project</code>.
           </p>
+          <details className="mcp-help">
+            <summary>
+              Usar a Paktro Bridge também no Claude Code ou no OpenAI Codex
+            </summary>
+            <div className="mcp-help-body">
+              <p>
+                O mesmo executável <code>bridge/dist/cli.mjs</code> segue o
+                protocolo MCP padrão (stdio) e também pode ser registrado no
+                Claude Code ou no Codex apontando para o mesmo{" "}
+                <code>--file</code>:
+              </p>
+              <CodeSnippet
+                label="Registrar Paktro Bridge no Claude Code e no Codex"
+                code={
+                  "# Claude Code\nclaude mcp add paktro -- node /caminho/paktro/bridge/dist/cli.mjs --file /caminho/.paktro/library.json\n\n# OpenAI Codex\ncodex mcp add paktro -- node /caminho/paktro/bridge/dist/cli.mjs --file /caminho/.paktro/library.json"
+                }
+              />
+            </div>
+          </details>
         </li>
         <li>
           <h3>Inicie a ponte local e conecte este site ao vivo</h3>
@@ -227,19 +246,20 @@ export default function BridgeSetup({
           </p>
         </li>
         <li>
-          <h3>Peça para a IA criar um agente no Agex</h3>
+          <h3>Peça para a IA criar um agente no Paktro</h3>
           <CodeSnippet
-            label="Pedido para a IA criar o agente no Agex"
+            label="Pedido para a IA criar o agente no Paktro"
             code={
-              "Use get_studio_catalog e create_agent do servidor MCP agex para criar um agente especialista para este projeto no Agex. Avise quando terminar para eu revisar e dar o OK no site."
+              "Use get_studio_catalog e create_agent do servidor MCP paktro para criar um agente especialista para este projeto no Paktro. Avise quando terminar para eu revisar e dar o OK no site."
             }
           />
           <p>
-            O agente entra no Agex com status{" "}
+            O agente entra no Paktro com status{" "}
             <strong>Aguardando seu OK</strong>. Abra-o em{" "}
             <strong>Meus agentes</strong>, revise ferramentas, modelo
-            (Hydrogen/Argon), regras e prévia, faça os ajustes que quiser e
-            clique em <strong>Dar OK (aprovar para exportar)</strong>.
+            (Neon/Hydrogen/Carbon/Claude/GPT-6), regras e prévia, faça os
+            ajustes que quiser e clique em{" "}
+            <strong>Dar OK (aprovar para exportar)</strong>.
           </p>
         </li>
         <li>
@@ -247,7 +267,7 @@ export default function BridgeSetup({
           <CodeSnippet
             label="Pedido para a IA exportar após você dar o OK"
             code={
-              "Já revisei e dei o OK no site Agex. Use export_pack_to_project do servidor agex para gravar os arquivos diretamente na pasta deste projeto."
+              "Já revisei e dei o OK no site Paktro. Use export_pack_to_project do servidor paktro para gravar os arquivos diretamente na pasta deste projeto."
             }
           />
           <div className="info-box">
@@ -276,7 +296,7 @@ export default function BridgeSetup({
             onClick={() =>
               download(
                 serializeBackup(agents),
-                "agex.json",
+                "paktro.json",
                 "application/json",
               )
             }
@@ -297,7 +317,7 @@ export default function BridgeSetup({
             </li>
             <li>
               <b>cli.mjs não encontrado:</b> execute{" "}
-              <code>npm run bridge:build</code> na pasta do Agex e confira o
+              <code>npm run bridge:build</code> na pasta do Paktro e confira o
               caminho absoluto em <code>args</code>.
             </li>
             <li>

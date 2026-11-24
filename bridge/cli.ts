@@ -7,17 +7,19 @@ import { createMcpServer } from "./mcp";
 import { createBridgeHttp } from "./http";
 
 function defaultLibraryPath(): string {
+  const paktroFile = resolve(homedir(), ".paktro/library.json");
+  if (existsSync(paktroFile)) return paktroFile;
   const agexFile = resolve(homedir(), ".agex/library.json");
   if (existsSync(agexFile)) return agexFile;
   const legacyFile = resolve(homedir(), ".agent-studio/library.json");
-  return existsSync(legacyFile) ? legacyFile : agexFile;
+  return existsSync(legacyFile) ? legacyFile : paktroFile;
 }
 
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--help")) {
     process.stdout.write(
-      `Agex Bridge\n\nnode bridge/dist/cli.mjs [--file /caminho/agex.json]\nnode bridge/dist/cli.mjs --http --origin http://localhost:3000 [--port 4319] [--file /caminho/agex.json] [--auto-token]\n\nSem --http: servidor MCP stdio (get_studio_catalog, list_packs, get_pack, validate_pack, create_agent, update_agent, export_pack_to_project).\nCom --http: sincronização ao vivo e aprovação com o site no navegador; exige AGEX_BRIDGE_TOKEN (32+ caracteres) ou --auto-token.\nExportações diretas para projetos exigem aprovação prévia (Dar OK) do usuário no site Agex.\n`,
+      `Paktro Bridge\n\nnode bridge/dist/cli.mjs [--file /caminho/paktro.json]\nnode bridge/dist/cli.mjs --http --origin http://localhost:3000 [--port 4319] [--file /caminho/paktro.json] [--auto-token]\n\nSem --http: servidor MCP stdio (get_studio_catalog, list_packs, get_pack, validate_pack, create_agent, update_agent, export_pack_to_project).\nCom --http: sincronização ao vivo e aprovação com o site no navegador; exige PAKTRO_BRIDGE_TOKEN (32+ caracteres) ou --auto-token.\nExportações diretas para projetos exigem aprovação prévia (Dar OK) do usuário no site Paktro.\n`,
     );
     return;
   }
@@ -51,6 +53,7 @@ async function main() {
     if (!Number.isInteger(port) || port < 1024 || port > 65535)
       throw new Error("Porta inválida.");
     let token =
+      process.env.PAKTRO_BRIDGE_TOKEN ??
       process.env.AGEX_BRIDGE_TOKEN ??
       process.env.AGENT_STUDIO_BRIDGE_TOKEN ??
       "";
@@ -69,7 +72,7 @@ async function main() {
     });
     server.listen(port, "127.0.0.1", () =>
       process.stderr.write(
-        `Agex Bridge em http://127.0.0.1:${port}. Origem autorizada: ${origin}. Biblioteca: ${file}\n`,
+        `Paktro Bridge em http://127.0.0.1:${port}. Origem autorizada: ${origin}. Biblioteca: ${file}\n`,
       ),
     );
     for (const signal of ["SIGINT", "SIGTERM"] as const)

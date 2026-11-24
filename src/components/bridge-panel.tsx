@@ -100,7 +100,7 @@ export default function BridgePanel({
           <span className="eyebrow purple">DO NAVEGADOR AO SEU AMBIENTE</span>
           <h1>Uma ponte para seus agentes.</h1>
           <p>
-            Conecte a IA do Antigravity ao Agex para criar agentes por MCP,
+            Conecte a IA do Antigravity ao Paktro para criar agentes por MCP,
             revisar aqui no site, dar o OK e exportar direto para o seu projeto.
           </p>
         </div>
@@ -109,7 +109,7 @@ export default function BridgePanel({
         <Plug size={18} />
         <p>
           <strong>Qual conexão você precisa?</strong> Esta tela conecta o
-          próprio <strong>Agex</strong> ao Antigravity (via MCP) para que a IA
+          próprio <strong>Paktro</strong> ao Antigravity (via MCP) para que a IA
           crie e exporte seus conjuntos mediante seu OK. Para conectar outros
           MCPs que o seu agente gerado vai usar (banco de dados, APIs, etc.),
           use a etapa <b>Integrações</b> no editor.
